@@ -473,9 +473,10 @@ def answer():
     response.record(
         play_beep=True,
         max_length = 5400,
-        action = f"{HOST}/record-complete?call-uuid={call_uuid}",
         transcribe = True,
         transcribe_callback = f"{HOST}/transcribe-complete?call-uuid={call_uuid}",
+        recording_status_callback = f"{HOST}/record-complete?call-uuid={call_uuid}",
+        recording_status_callback_event = "completed"
     )
 
     return Response(str(response), mimetype='text/xml')
