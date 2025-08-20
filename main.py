@@ -313,6 +313,24 @@ def test_twilio_env():
         'twilio_client_initialized': twilio_client is not None
     }), 200
 
+@app.route('/debug/calls', methods=['GET'])
+def debug_calls():
+    """Debug endpoint to see all calls in the database."""
+    try:
+        calls = db.session.query(Call).all()
+        calls_list = []
+        for call in calls:
+            calls_list.append({
+                'id': call.id,
+                'from_phone': call.from_phone,
+                'recording_url': call.recording_url,
+                'recording_status': call.recording_status,
+                'call_date': call.call_date.isoformat() if call.call_date else None
+            })
+        return jsonify(calls_list), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/recording/<recording_id>', methods=['GET'])
 def get_recording(recording_id):
     """Proxy endpoint to serve Twilio recordings with authentication."""
@@ -454,7 +472,6 @@ def record_complete():
 
     body = get_formated_body()
     
-    # Check if this is already processed to avoid duplicates
     recording_status = body.get('RecordingStatus')
     if recording_status != 'completed':
         print(f"Ignoring recording status: {recording_status}")
@@ -469,12 +486,10 @@ def record_complete():
     if not call:
         return jsonify({'error': 'Call not found'}), 404
     
-    # Check if recording is already processed to avoid duplicates
     if call.recording_status == 'completed' and call.recording_url:
         print(f"Recording already processed for call UUID: {call_uuid}")
         return jsonify("Recording already processed."), 200
 
-    # Store our proxy URL instead of direct Twilio URL
     if recording_sid:
         # Use our proxy endpoint that handles authentication
         recording_url = f"{HOST}/recording/{recording_sid}"
