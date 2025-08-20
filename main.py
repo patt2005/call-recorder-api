@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
+from sqlalchemy import false
 from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client
 import uuid
@@ -336,12 +337,10 @@ def get_recording(recording_id):
     """Proxy endpoint to serve Twilio recordings with authentication."""
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
         return jsonify({'error': 'Twilio credentials not configured'}), 500
-    
-    # Construct the Twilio recording URL
+
     recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{recording_id}.mp3"
     
     try:
-        # Make authenticated request to Twilio
         response = requests.get(
             recording_url,
             auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
@@ -539,10 +538,8 @@ def answer():
     response.record(
         play_beep=True,
         max_length = 5400,
-        transcribe = True,
-        transcribe_callback = f"{HOST}/transcribe-complete?call-uuid={call_uuid}",
+        transcribe = False,
         recording_status_callback = f"{HOST}/record-complete?call-uuid={call_uuid}",
-        recording_status_callback_event = "completed"
     )
 
     return Response(str(response), mimetype='text/xml')
