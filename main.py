@@ -8,6 +8,8 @@ import uuid
 import os
 import threading
 from datetime import datetime
+import requests
+from requests.auth import HTTPBasicAuth
 from database import db
 from models.call import Call
 from models.user import User
@@ -311,6 +313,42 @@ def test_twilio_env():
         'twilio_client_initialized': twilio_client is not None
     }), 200
 
+@app.route('/recording/<recording_id>', methods=['GET'])
+def get_recording(recording_id):
+    """Proxy endpoint to serve Twilio recordings with authentication."""
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+        return jsonify({'error': 'Twilio credentials not configured'}), 500
+    
+    # Construct the Twilio recording URL
+    recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{recording_id}.mp3"
+    
+    try:
+        # Make authenticated request to Twilio
+        response = requests.get(
+            recording_url,
+            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            stream=True
+        )
+        
+        if response.status_code == 200:
+            # Return the audio file with proper headers
+            return Response(
+                response.content,
+                mimetype='audio/mpeg',
+                headers={
+                    'Content-Disposition': f'inline; filename="recording_{recording_id}.mp3"',
+                    'Content-Length': str(len(response.content)),
+                    'Cache-Control': 'public, max-age=3600'  # Cache for 1 hour
+                }
+            )
+        else:
+            return jsonify({
+                'error': f'Failed to fetch recording: {response.status_code}'
+            }), response.status_code
+            
+    except Exception as e:
+        return jsonify({'error': f'Error fetching recording: {str(e)}'}), 500
+
 @app.route('/delete_all_recordings', methods=['POST'])
 def delete_all_recordings():
     try:
@@ -436,29 +474,24 @@ def record_complete():
         print(f"Recording already processed for call UUID: {call_uuid}")
         return jsonify("Recording already processed."), 200
 
-    # Handle recording URL - convert to MP3 format for better compatibility
-    if recording_url:
-        # Ensure we have the full URL
-        if recording_url.startswith('/'):
-            recording_url = f"https://api.twilio.com{recording_url}"
-        
-        # Convert to MP3 format (Twilio returns WAV by default, MP3 with .mp3 suffix)
-        if not recording_url.endswith('.mp3'):
-            recording_url = f"{recording_url}.mp3"
-        
-        print(f"Recording URL (MP3 format): {recording_url}")
+    # Store our proxy URL instead of direct Twilio URL
+    if recording_sid:
+        # Use our proxy endpoint that handles authentication
+        recording_url = f"{HOST}/recording/{recording_sid}"
+        print(f"Using proxy recording URL: {recording_url}")
+    elif recording_url:
+        # Extract recording ID from Twilio URL and use our proxy
+        if 'Recordings/' in recording_url:
+            # Extract recording ID from URL like: /2010-04-01/Accounts/.../Recordings/RE123456
+            parts = recording_url.split('Recordings/')
+            if len(parts) > 1:
+                recording_id = parts[-1].split('.')[0]  # Remove .mp3 if present
+                recording_url = f"{HOST}/recording/{recording_id}"
+                print(f"Extracted recording ID {recording_id}, using proxy URL: {recording_url}")
+        else:
+            print(f"Could not extract recording ID from URL: {recording_url}")
     else:
-        print("Warning: No RecordingUrl provided in webhook")
-        
-    # Optional: Try to get media_url from Twilio API if needed (requires auth)
-    if recording_sid and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and not recording_url:
-        try:
-            print(f"Attempting to fetch recording with SID: {recording_sid}")
-            recording = twilio_client.recordings(recording_sid).fetch()
-            recording_url = f"https://api.twilio.com{recording.media_url}.mp3"
-            print(f"Retrieved recording URL from API: {recording_url}")
-        except Exception as e:
-            print(f"Error fetching recording from Twilio API: {str(e)}")
+        print("Warning: No RecordingUrl or RecordingSid provided in webhook")
     
     call.recording_url = recording_url
     call.recording_duration = int(recording_length) if recording_length else None

@@ -9,3 +9,4 @@ gunicorn==21.2.0
 twilio==8.10.0
 g4f==0.5.3.2
 firebase-admin==6.5.0
+requests==2.31.0
