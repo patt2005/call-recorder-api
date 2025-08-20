@@ -520,22 +520,50 @@ def answer():
     user_phone = body.get('From')
     call_sid = body.get('CallSid')  # Use Twilio's unique CallSid
     call_status = body.get('CallStatus', 'unknown')
+    digits = body.get('Digits')
+    recording_sid = body.get('RecordingSid') 
+    recording_duration = body.get('RecordingDuration')
     
-    print(f"Answer endpoint called - CallSid: {call_sid}, Status: {call_status}")
+    print(f"Answer endpoint called - CallSid: {call_sid}, Status: {call_status}, Digits: {digits}")
     
     # Check if we already have a call record for this CallSid
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
     
     if existing_call:
-        print(f"Call {call_sid} already exists, not creating duplicate")
+        print(f"Call {call_sid} already exists")
         call_uuid = call_sid
+        call = existing_call
+        
+        # If this request contains recording data (call completed), update the call
+        if digits == 'hangup' and recording_sid:
+            print(f"Updating call {call_sid} with recording data")
+            
+            # Store our proxy URL instead of direct Twilio URL
+            proxy_recording_url = f"{HOST}/recording/{recording_sid}"
+            
+            call.recording_url = proxy_recording_url
+            call.recording_duration = int(recording_duration) if recording_duration else None
+            call.recording_status = 'completed'
+            db.session.commit()
+            
+            print(f"Recording completed for call {call_sid}: {proxy_recording_url}")
+            return jsonify("Recording data processed successfully."), 200
+            
     else:
-        # Create new call record using CallSid as the UUID
-        call_uuid = call_sid
-        call = Call(call_uuid, user_phone, datetime.now())
-        db.session.add(call)
-        db.session.commit()
-        print(f"Created new call record with CallSid: {call_sid}")
+        # Create new call record using CallSid as the UUID (only for initial call)
+        if digits != 'hangup':  # Only create new calls for non-hangup requests
+            call_uuid = call_sid
+            call = Call(call_uuid, user_phone, datetime.now())
+            db.session.add(call)
+            db.session.commit()
+            print(f"Created new call record with CallSid: {call_sid}")
+        else:
+            print(f"Ignoring hangup request for non-existent call: {call_sid}")
+            return jsonify("Call not found for hangup."), 404
+
+    # Only return TwiML for initial call setup (not for hangup)
+    if digits == 'hangup':
+        return jsonify("Hangup processed."), 200
 
     response = VoiceResponse()
 
@@ -548,8 +576,9 @@ def answer():
     response.record(
         play_beep=True,
         max_length = 5400,
-        transcribe = False,
-        recording_status_callback = f"{HOST}/record-complete?call-uuid={call_uuid}",
+        transcribe = True,
+        transcribe_callback = f"{HOST}/transcribe-complete?call-uuid={call_uuid}",
+        action = f"{HOST}/answer",  # Use the same answer endpoint for recording completion
     )
 
     return Response(str(response), mimetype='text/xml')
