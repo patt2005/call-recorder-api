@@ -148,3 +148,7 @@ Thumbs.db
 
 # Claude
 .claude/
+
+# Environment variables with secrets
+set_env_real.sh
+.env.local
