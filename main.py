@@ -297,6 +297,20 @@ def get_service_phone_number():
         'phoneNumber': SERVICE_PHONE_NUMBER
     }), 200
 
+@app.route('/test/twilio-env', methods=['GET'])
+def test_twilio_env():
+    """Test endpoint to check if Twilio environment variables are set."""
+    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+    
+    return jsonify({
+        'TWILIO_ACCOUNT_SID': 'SET' if account_sid else 'NOT SET',
+        'TWILIO_AUTH_TOKEN': 'SET' if auth_token else 'NOT SET',
+        'account_sid_prefix': account_sid[:10] + '...' if account_sid else None,
+        'auth_token_prefix': auth_token[:6] + '...' if auth_token else None,
+        'twilio_client_initialized': twilio_client is not None
+    }), 200
+
 @app.route('/delete_all_recordings', methods=['POST'])
 def delete_all_recordings():
     try:
