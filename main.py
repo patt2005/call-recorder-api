@@ -459,9 +459,9 @@ def answer():
     response.record(
         play_beep=True,
         max_length = 5400,
-        action = f"/record-complete?call-uuid={call_uuid}",
+        action = f"{HOST}/record-complete?call-uuid={call_uuid}",
         transcribe = True,
-        transcribe_callback = f"/transcribe-complete?call-uuid={call_uuid}",
+        transcribe_callback = f"{HOST}/transcribe-complete?call-uuid={call_uuid}",
     )
 
     return Response(str(response), mimetype='text/xml')
