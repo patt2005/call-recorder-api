@@ -2,10 +2,8 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
-from sqlalchemy import false
 from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client
-import uuid
 import os
 import threading
 from datetime import datetime
@@ -518,14 +516,26 @@ def record_complete():
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
     """Handle incoming call and connect to a conference with beep and recording."""
-    call_uuid = str(uuid.uuid4())
-
     body = get_formated_body()
     user_phone = body.get('From')
-
-    call = Call(call_uuid, user_phone, datetime.now())
-    db.session.add(call)
-    db.session.commit()
+    call_sid = body.get('CallSid')  # Use Twilio's unique CallSid
+    call_status = body.get('CallStatus', 'unknown')
+    
+    print(f"Answer endpoint called - CallSid: {call_sid}, Status: {call_status}")
+    
+    # Check if we already have a call record for this CallSid
+    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
+    
+    if existing_call:
+        print(f"Call {call_sid} already exists, not creating duplicate")
+        call_uuid = call_sid
+    else:
+        # Create new call record using CallSid as the UUID
+        call_uuid = call_sid
+        call = Call(call_uuid, user_phone, datetime.now())
+        db.session.add(call)
+        db.session.commit()
+        print(f"Created new call record with CallSid: {call_sid}")
 
     response = VoiceResponse()
 
