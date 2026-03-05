@@ -15,10 +15,9 @@ from models.user import User
 from summary_service import SummaryService
 from push_notification_service import push_notification_service
 
-HOST = "https://call-recorder-api-164860087792.us-central1.run.app"
+HOST = ""
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
 
-# Twilio credentials
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -155,7 +154,8 @@ def delete_recording():
 def register_user():
     try:
         body = get_formated_body()
-        
+
+        id = body.get('id')
         phone_number = body.get('phoneNumber')
         country_code = body.get('countryCode')
         fcm_token = body.get('fcmToken')
@@ -166,13 +166,14 @@ def register_user():
         if not fcm_token:
             return jsonify({'error': 'fcmToken is required'}), 400
         
-        existing_user = db.session.query(User).filter_by(phone_number=phone_number).first()
+        existing_user = db.session.query(User).filter_by(id=id).first()
         
         if existing_user:
             existing_user.fcm_token = fcm_token
             if country_code:
                 existing_user.country_code = country_code
             existing_user.updated_at = datetime.now()
+            existing_user.phone_number = phone_number
             db.session.commit()
             
             return jsonify({
@@ -181,6 +182,7 @@ def register_user():
             }), 200
         else:
             new_user = User(
+                id=id,
                 phone_number=phone_number,
                 fcm_token=fcm_token
             )
@@ -190,7 +192,6 @@ def register_user():
             db.session.commit()
             
             return jsonify({
-                'userId': str(new_user.id),
                 'message': 'User registered successfully'
             }), 201
             
@@ -289,27 +290,17 @@ def update_notification_settings():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/service/phone', methods=['GET'])
-def get_service_phone_number():
+@app.route('/api/service/phone/<country_code>', methods=['GET'])
+def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
-    SERVICE_PHONE_NUMBER = "+19865294217"
-    
-    return jsonify({
-        'phoneNumber': SERVICE_PHONE_NUMBER
-    }), 200
 
-@app.route('/test/twilio-env', methods=['GET'])
-def test_twilio_env():
-    """Test endpoint to check if Twilio environment variables are set."""
-    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+    if country_code == "US":
+        phone_number = "+19865294217"
+    else:
+        phone_number = ""
     
     return jsonify({
-        'TWILIO_ACCOUNT_SID': 'SET' if account_sid else 'NOT SET',
-        'TWILIO_AUTH_TOKEN': 'SET' if auth_token else 'NOT SET',
-        'account_sid_prefix': account_sid[:10] + '...' if account_sid else None,
-        'auth_token_prefix': auth_token[:6] + '...' if auth_token else None,
-        'twilio_client_initialized': twilio_client is not None
+        'phoneNumber': phone_number
     }), 200
 
 @app.route('/debug/calls', methods=['GET'])
@@ -346,7 +337,6 @@ def get_recording(recording_id):
         )
         
         if response.status_code == 200:
-            # Return the audio file with proper headers
             return Response(
                 response.content,
                 mimetype='audio/mpeg',
@@ -492,9 +482,7 @@ def record_complete():
         recording_url = f"{HOST}/recording/{recording_sid}"
         print(f"Using proxy recording URL: {recording_url}")
     elif recording_url:
-        # Extract recording ID from Twilio URL and use our proxy
         if 'Recordings/' in recording_url:
-            # Extract recording ID from URL like: /2010-04-01/Accounts/.../Recordings/RE123456
             parts = recording_url.split('Recordings/')
             if len(parts) > 1:
                 recording_id = parts[-1].split('.')[0]  # Remove .mp3 if present
@@ -526,7 +514,6 @@ def answer():
         print(f"Call {call_sid} already exists, not creating duplicate")
         return jsonify("Call already exists."), 200
     else:
-        # Create new call record using CallSid as the UUID
         call_uuid = call_sid
         call = Call(call_uuid, user_phone, datetime.now())
         db.session.add(call)

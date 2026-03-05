@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class User(db.Model):
-    __tablename__ = 'call_users'
+    __tablename__ = 'users'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone_number = Column(String, unique=True, nullable=False)
