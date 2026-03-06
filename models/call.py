@@ -1,4 +1,4 @@
-from database import db
+from database.database import db
 
 class Call(db.Model):
     __tablename__ = 'calls'

@@ -11,9 +11,8 @@ Usage:
 """
 
 import sys
-import os
-from flask_migrate import Migrate, init, migrate, upgrade, downgrade
-from main import app, db
+from flask_migrate import init, migrate, upgrade, downgrade
+from main import app
 
 def run_migration(command):
     """Execute migration command"""
