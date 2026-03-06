@@ -9,11 +9,11 @@ import threading
 from datetime import datetime
 import requests
 from requests.auth import HTTPBasicAuth
-from database import db
+from database.database import db
 from models.call import Call
 from models.user import User
-from summary_service import SummaryService
-from push_notification_service import push_notification_service
+from services.push_notification_service import push_notification_service
+from services.summary_service import SummaryService
 
 HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
@@ -505,8 +505,15 @@ def record_complete():
 def answer():
     """Handle incoming call and connect to a conference with beep and recording."""
     body = get_formated_body()
+
+    if not body:
+        return jsonify({'error': 'Body parameter is required'}), 400
+
     user_phone = body.get('From')
     call_sid = body.get('CallSid')
+
+    if not user_phone:
+        return jsonify({'error': 'User phone parameter is required'}), 400
 
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
     
