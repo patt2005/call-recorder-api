@@ -15,7 +15,7 @@ from models.user import User
 from summary_service import SummaryService
 from push_notification_service import push_notification_service
 
-HOST = ""
+HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
 
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
