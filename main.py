@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
-from twilio.twiml.voice_response import VoiceResponse
+from twilio.twiml.voice_response import VoiceResponse, Dial
 from twilio.rest import Client
 import os
 import threading
@@ -478,7 +478,6 @@ def record_complete():
         return jsonify("Recording already processed."), 200
 
     if recording_sid:
-        # Use our proxy endpoint that handles authentication
         recording_url = f"{HOST}/recording/{recording_sid}"
         print(f"Using proxy recording URL: {recording_url}")
     elif recording_url:
@@ -529,10 +528,10 @@ def answer():
 
     response = VoiceResponse()
 
-    response.say("You are being connected. The recording has started.")
+    response.say("The recording has started.")
 
     response.record(
-        play_beep=True,
+        play_beep=False,
         max_length = 5400,
         transcribe = False,
         recording_status_callback = f"{HOST}/record-complete?call-uuid={call_uuid}",
