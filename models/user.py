@@ -10,8 +10,8 @@ class User(db.Model):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone_number = Column(String, unique=True, nullable=False)
-    country_code = Column(String, nullable=True)
-    fcm_token = Column(String, nullable=False)
+    country_code = Column(String, nullable=False)
+    fcm_token = Column(String, nullable=True)
     push_notifications_enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

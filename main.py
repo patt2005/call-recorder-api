@@ -163,8 +163,8 @@ def register_user():
         if not phone_number:
             return jsonify({'error': 'phoneNumber is required'}), 400
         
-        if not fcm_token:
-            return jsonify({'error': 'fcmToken is required'}), 400
+        if not country_code:
+            return jsonify({'error': 'country code is required'}), 400
         
         existing_user = db.session.query(User).filter_by(id=id).first()
         
