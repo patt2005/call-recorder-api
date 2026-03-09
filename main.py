@@ -297,7 +297,7 @@ def get_service_phone_number(country_code):
     if country_code == "US":
         phone_number = "+19865294217"
     else:
-        phone_number = ""
+        phone_number = "+19865294217"
     
     return jsonify({
         'phoneNumber': phone_number
