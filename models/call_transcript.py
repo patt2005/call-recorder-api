@@ -10,8 +10,8 @@ class CallTranscript(db.Model):
     call_id = db.Column(db.String(100), db.ForeignKey('calls.id', ondelete='CASCADE'), nullable=False, unique=True)
 
     text = db.Column(db.Text, nullable=True)
-    segments = db.Column(db.Text, nullable=True)  # JSON array of {start, end, text}
-    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, processing, completed, failed
+    segments = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending')
 
     language = db.Column(db.String(20), nullable=True)
     duration_seconds = db.Column(db.Float, nullable=True)
@@ -19,7 +19,6 @@ class CallTranscript(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Optional: backref on Call so we can do call.transcript
     call = db.relationship('Call', backref=db.backref('transcript', uselist=False, cascade='all, delete-orphan'))
 
     def __init__(self, call_id, text=None, segments=None, status='pending', language=None, duration_seconds=None,

@@ -166,7 +166,6 @@ def get_transcripts_for_user():
             return jsonify({'error': 'User not found'}), 404
         user_phone = user.phone_number
 
-    # Transcripts for calls that belong to this user (eager-load call to avoid N+1)
     transcripts = (
         db.session.query(CallTranscript)
         .join(Call, CallTranscript.call_id == Call.id)
