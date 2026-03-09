@@ -4,16 +4,19 @@ from flask_cors import CORS
 from flask_migrate import Migrate
 from twilio.twiml.voice_response import VoiceResponse, Dial
 from twilio.rest import Client
+import json
 import os
 import threading
 from datetime import datetime
 import requests
+from sqlalchemy.orm import joinedload
 from requests.auth import HTTPBasicAuth
 from database.database import db
 from models.call import Call
+from models.call_transcript import CallTranscript
 from models.user import User
 from services.push_notification_service import push_notification_service
-from services.summary_service import SummaryService
+from services.transcript_service import TranscriptService
 
 HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
@@ -31,36 +34,50 @@ db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
 
-def process_summary_and_title_background(call_uuid, transcribe_text):
-    """Background function to generate summary and title for a call."""
+def process_transcript_background(call_uuid):
+    """Background: transcribe recording with Whisper, save to CallTranscript and sync to Call."""
     with app.app_context():
         try:
-            print(f"Starting background processing for call UUID: {call_uuid}")
-            
+            print(f"Starting Whisper transcription for call UUID: {call_uuid}")
             call = db.session.query(Call).filter_by(id=call_uuid).first()
-            if not call:
-                print(f"Call not found for UUID: {call_uuid}")
+            if not call or not call.recording_url:
+                print(f"Call not found or no recording URL for UUID: {call_uuid}")
                 return
-            
-            summary_service = SummaryService()
-            
-            call.summary = summary_service.get_summary(transcribe_text)
-            print(f"Summary generated for call UUID: {call_uuid}")
-            
-            call.title = summary_service.get_title(transcribe_text)
-            print(f"Title generated for call UUID: {call_uuid}")
-            
+            transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
+            if not transcript:
+                transcript = CallTranscript(call_id=call_uuid, status='processing')
+                db.session.add(transcript)
+            else:
+                transcript.status = 'processing'
             db.session.commit()
-            print(f"Background processing completed for call UUID: {call_uuid}")
-            
+
+            transcript_service = TranscriptService(api_key=os.environ.get("OPENAI_API_KEY"))
+            result = transcript_service.get_transcript(call.recording_url)
+
+            transcript.text = result.get("text") or ""
+            transcript.segments = json.dumps(result["segments"]) if result.get("segments") else None
+            transcript.status = "completed"
+            transcript.language = result.get("language")
+            transcript.duration_seconds = result.get("duration")
+            transcript.updated_at = datetime.utcnow()
+
+            call.transcription_text = transcript.text
+            call.transcription_status = "completed"
+            call.transcription_segments = transcript.segments
+
+            db.session.commit()
+            print(f"Whisper transcription completed for call UUID: {call_uuid}")
         except Exception as e:
-            print(f"Error in background processing for call UUID {call_uuid}: {str(e)}")
+            print(f"Error transcribing call {call_uuid}: {str(e)}")
             try:
                 call = db.session.query(Call).filter_by(id=call_uuid).first()
                 if call:
-                    call.summary = "Summary generation failed. Please review the transcription."
-                    call.title = "Call Recording"
-                    db.session.commit()
+                    call.transcription_status = "failed"
+                transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
+                if transcript:
+                    transcript.status = "failed"
+                    transcript.updated_at = datetime.utcnow()
+                db.session.commit()
             except Exception as inner_e:
                 print(f"Failed to update call with error fallback: {str(inner_e)}")
 
@@ -98,6 +115,22 @@ def get_calls_for_user():
     calls = db.session.query(Call).filter_by(from_phone=user_phone).all()
     calls_list = []
     for call in calls:
+        transcript = getattr(call, 'transcript', None)
+        if transcript:
+            text, status, segments = transcript.text, transcript.status, None
+            if transcript.segments:
+                try:
+                    segments = json.loads(transcript.segments)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            text, status = call.transcription_text, call.transcription_status
+            segments = None
+            if getattr(call, 'transcription_segments', None):
+                try:
+                    segments = json.loads(call.transcription_segments)
+                except (TypeError, ValueError):
+                    pass
         calls_list.append({
             'id': call.id,
             'from_phone': call.from_phone,
@@ -107,11 +140,70 @@ def get_calls_for_user():
             'recording_url': call.recording_url,
             'recording_duration': call.recording_duration,
             'recording_status': call.recording_status,
-            'transcription_text': call.transcription_text,
-            'transcription_status': call.transcription_status
+            'transcription_text': text,
+            'transcription_status': status,
+            'transcription_segments': segments,
         })
 
     return jsonify(calls_list), 200
+
+@app.route('/get_transcripts_for_user', methods=['GET', 'POST'])
+def get_transcripts_for_user():
+    """Fetch all call transcripts for a user (by user_id or user_phone)."""
+    if request.method == 'POST':
+        body = get_formated_body()
+    else:
+        body = request.args.to_dict()
+    user_phone = body.get('user_phone')
+    user_id = body.get('user_id')
+
+    if not user_phone and not user_id:
+        return jsonify({'error': 'Either user_phone or user_id is required'}), 400
+
+    if user_id:
+        user = db.session.query(User).filter_by(id=user_id).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user_phone = user.phone_number
+
+    # Transcripts for calls that belong to this user (eager-load call to avoid N+1)
+    transcripts = (
+        db.session.query(CallTranscript)
+        .join(Call, CallTranscript.call_id == Call.id)
+        .options(joinedload(CallTranscript.call))
+        .filter(Call.from_phone == user_phone)
+        .order_by(CallTranscript.updated_at.desc())
+        .all()
+    )
+
+    result = []
+    for t in transcripts:
+        segments_parsed = None
+        if t.segments:
+            try:
+                segments_parsed = json.loads(t.segments)
+            except (TypeError, ValueError):
+                pass
+        result.append({
+            'id': t.id,
+            'call_id': t.call_id,
+            'text': t.text,
+            'segments': segments_parsed,
+            'status': t.status,
+            'language': t.language,
+            'duration_seconds': t.duration_seconds,
+            'created_at': t.created_at.isoformat() if t.created_at else None,
+            'updated_at': t.updated_at.isoformat() if t.updated_at else None,
+            'call': {
+                'id': t.call.id,
+                'call_date': t.call.call_date.isoformat() if t.call.call_date else None,
+                'recording_url': t.call.recording_url,
+                'recording_duration': t.call.recording_duration,
+                'from_phone': t.call.from_phone,
+            } if t.call else None,
+        })
+
+    return jsonify(result), 200
 
 @app.route('/delete_recording', methods=['POST'])
 def delete_recording():
@@ -380,6 +472,29 @@ def delete_all_recordings():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/transcribe', methods=['POST'])
+def transcribe_recording():
+    """Transcribe a recording by URL using OpenAI Whisper. Returns text by phrases (segments)."""
+    try:
+        body = get_formated_body()
+        recording_url = body.get('recording_url')
+        if not recording_url or not str(recording_url).strip():
+            return jsonify({'error': 'recording_url is required'}), 400
+        if not os.environ.get('OPENAI_API_KEY'):
+            return jsonify({'error': 'OPENAI_API_KEY is not configured'}), 500
+        transcript_service = TranscriptService(api_key=os.environ.get('OPENAI_API_KEY'))
+        result = transcript_service.get_transcript(str(recording_url).strip())
+        return jsonify({
+            'text': result.get('text', ''),
+            'segments': result.get('segments', []),
+            'language': result.get('language'),
+            'duration': result.get('duration'),
+        }), 200
+    except requests.RequestException as e:
+        return jsonify({'error': f'Failed to fetch recording: {str(e)}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/transcribe-complete', methods=['POST'])
 def transcribe_complete():
     call_uuid = request.args.get('call-uuid')
@@ -401,15 +516,6 @@ def transcribe_complete():
         call.transcription_status = transcribe_status
 
         db.session.commit()
-
-        if transcribe_status == "completed" and transcribe_text:
-            background_thread = threading.Thread(
-                target=process_summary_and_title_background,
-                args=(call_uuid, transcribe_text)
-            )
-            background_thread.daemon = True
-            background_thread.start()
-            print(f"Started background processing for call UUID: {call_uuid}")
 
         user = db.session.query(User).filter_by(phone_number=call.from_phone).first()
         if user and user.push_notifications_enabled and user.fcm_token:
@@ -496,7 +602,17 @@ def record_complete():
     call.recording_duration = int(recording_length) if recording_length else None
     call.recording_status = 'completed'
 
+    if not db.session.query(CallTranscript).filter_by(call_id=call_uuid).first():
+        db.session.add(CallTranscript(call_id=call_uuid, status='processing'))
     db.session.commit()
+
+    background_thread = threading.Thread(
+        target=process_transcript_background,
+        args=(call_uuid,)
+    )
+    background_thread.daemon = True
+    background_thread.start()
+    print(f"Started Whisper transcription for call UUID: {call_uuid}")
 
     return jsonify("Recording successfully completed."), 200
 
