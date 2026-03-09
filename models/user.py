@@ -8,8 +8,8 @@ from datetime import datetime
 class User(db.Model):
     __tablename__ = 'users'
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    phone_number = Column(String, unique=True, nullable=False)
+    id = Column(UUID(as_uuid=True), unique=True, primary_key=True, default=uuid.uuid4)
+    phone_number = Column(String, nullable=False)
     country_code = Column(String, nullable=False)
     fcm_token = Column(String, nullable=True)
     push_notifications_enabled = Column(Boolean, nullable=False, default=True)

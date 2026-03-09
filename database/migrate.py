@@ -4,13 +4,18 @@ Database migration script for the API application.
 This script handles database migrations using Flask-Migrate.
 
 Usage:
-    python migrate.py init     - Initialize migration repository
-    python migrate.py migrate  - Create a new migration
-    python migrate.py upgrade  - Apply migrations to database
-    python migrate.py downgrade - Revert last migration
+    python database/migrate.py init     - Initialize migration repository
+    python database/migrate.py migrate  - Create a new migration
+    python database/migrate.py upgrade  - Apply migrations to database
+    python database/migrate.py downgrade - Revert last migration
 """
 
 import sys
+from pathlib import Path
+
+# Add project root to path so "main" can be imported when run as python database/migrate.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from flask_migrate import init, migrate, upgrade, downgrade
 from main import app
 
