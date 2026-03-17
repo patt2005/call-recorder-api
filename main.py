@@ -274,10 +274,6 @@ def update_user_phone():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        existing_phone = db.session.query(User).filter_by(phone_number=phone_number).first()
-        if existing_phone and str(existing_phone.id) != user_id:
-            return jsonify({'error': 'Phone number already in use'}), 409
-        
         user.phone_number = phone_number
         user.country_code = country_code
         user.updated_at = datetime.utcnow()
