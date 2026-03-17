@@ -35,7 +35,7 @@ migrate = Migrate(app, db)
 api = Api(app)
 
 def process_transcript_background(call_uuid):
-    """Background: transcribe recording with Whisper, save to CallTranscript and sync to Call."""
+    """Background: transcribe recording with Whisper and save to CallTranscript."""
     with app.app_context():
         try:
             print(f"Starting Whisper transcription for call UUID: {call_uuid}")
@@ -61,18 +61,11 @@ def process_transcript_background(call_uuid):
             transcript.duration_seconds = result.get("duration")
             transcript.updated_at = datetime.utcnow()
 
-            call.transcription_text = transcript.text
-            call.transcription_status = "completed"
-            call.transcription_segments = transcript.segments
-
             db.session.commit()
             print(f"Whisper transcription completed for call UUID: {call_uuid}")
         except Exception as e:
             print(f"Error transcribing call {call_uuid}: {str(e)}")
             try:
-                call = db.session.query(Call).filter_by(id=call_uuid).first()
-                if call:
-                    call.transcription_status = "failed"
                 transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
                 if transcript:
                     transcript.status = "failed"
@@ -112,25 +105,35 @@ def get_calls_for_user():
             return jsonify({'error': 'User not found'}), 404
         user_phone = user.phone_number
     
-    calls = db.session.query(Call).filter_by(from_phone=user_phone).all()
+    calls = (
+        db.session.query(Call)
+        .options(joinedload(Call.transcript))
+        .filter_by(from_phone=user_phone)
+        .all()
+    )
     calls_list = []
     for call in calls:
         transcript = getattr(call, 'transcript', None)
         if transcript:
-            text, status, segments = transcript.text, transcript.status, None
+            segments_parsed = None
             if transcript.segments:
                 try:
-                    segments = json.loads(transcript.segments)
+                    segments_parsed = json.loads(transcript.segments)
                 except (TypeError, ValueError):
                     pass
+            transcript_json = {
+                'id': transcript.id,
+                'call_id': transcript.call_id,
+                'text': transcript.text,
+                'segments': segments_parsed,
+                'status': transcript.status,
+                'language': transcript.language,
+                'duration_seconds': transcript.duration_seconds,
+                'created_at': transcript.created_at.isoformat() if transcript.created_at else None,
+                'updated_at': transcript.updated_at.isoformat() if transcript.updated_at else None,
+            }
         else:
-            text, status = call.transcription_text, call.transcription_status
-            segments = None
-            if getattr(call, 'transcription_segments', None):
-                try:
-                    segments = json.loads(call.transcription_segments)
-                except (TypeError, ValueError):
-                    pass
+            transcript_json = None
         calls_list.append({
             'id': call.id,
             'from_phone': call.from_phone,
@@ -140,69 +143,10 @@ def get_calls_for_user():
             'recording_url': call.recording_url,
             'recording_duration': call.recording_duration,
             'recording_status': call.recording_status,
-            'transcription_text': text,
-            'transcription_status': status,
-            'transcription_segments': segments,
+            'transcript': transcript_json,
         })
 
     return jsonify(calls_list), 200
-
-@app.route('/get_transcripts_for_user', methods=['GET', 'POST'])
-def get_transcripts_for_user():
-    """Fetch all call transcripts for a user (by user_id or user_phone)."""
-    if request.method == 'POST':
-        body = get_formated_body()
-    else:
-        body = request.args.to_dict()
-    user_phone = body.get('user_phone')
-    user_id = body.get('user_id')
-
-    if not user_phone and not user_id:
-        return jsonify({'error': 'Either user_phone or user_id is required'}), 400
-
-    if user_id:
-        user = db.session.query(User).filter_by(id=user_id).first()
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        user_phone = user.phone_number
-
-    transcripts = (
-        db.session.query(CallTranscript)
-        .join(Call, CallTranscript.call_id == Call.id)
-        .options(joinedload(CallTranscript.call))
-        .filter(Call.from_phone == user_phone)
-        .order_by(CallTranscript.updated_at.desc())
-        .all()
-    )
-
-    result = []
-    for t in transcripts:
-        segments_parsed = None
-        if t.segments:
-            try:
-                segments_parsed = json.loads(t.segments)
-            except (TypeError, ValueError):
-                pass
-        result.append({
-            'id': t.id,
-            'call_id': t.call_id,
-            'text': t.text,
-            'segments': segments_parsed,
-            'status': t.status,
-            'language': t.language,
-            'duration_seconds': t.duration_seconds,
-            'created_at': t.created_at.isoformat() if t.created_at else None,
-            'updated_at': t.updated_at.isoformat() if t.updated_at else None,
-            'call': {
-                'id': t.call.id,
-                'call_date': t.call.call_date.isoformat() if t.call.call_date else None,
-                'recording_url': t.call.recording_url,
-                'recording_duration': t.call.recording_duration,
-                'from_phone': t.call.from_phone,
-            } if t.call else None,
-        })
-
-    return jsonify(result), 200
 
 @app.route('/delete_recording', methods=['POST'])
 def delete_recording():
@@ -387,9 +331,19 @@ def get_service_phone_number(country_code):
 
     if country_code == "US":
         phone_number = "+19865294217"
+    elif country_code == "FR":
+        phone_number = "+19865294217"
+    elif country_code == "HU":
+        phone_number = "+19865294217"
+    elif country_code == "RO":
+        phone_number = "+19865294217"
+    elif country_code == "PL":
+        phone_number = "+19865294217"
+    elif country_code == "CZ":
+        phone_number = "+19865294217"
     else:
         phone_number = "+19865294217"
-    
+
     return jsonify({
         'phoneNumber': phone_number
     }), 200
@@ -511,40 +465,19 @@ def transcribe_complete():
         if not call:
             return jsonify({'error': 'Call not found'}), 404
 
-        call.transcription_text = transcribe_text
-        call.transcription_status = transcribe_status
+        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
+        if not transcript:
+            transcript = CallTranscript(call_id=call_uuid, status=transcribe_status or 'pending')
+            db.session.add(transcript)
+        transcript.text = transcribe_text or ''
+        transcript.status = transcribe_status or 'pending'
+        transcript.updated_at = datetime.utcnow()
 
         db.session.commit()
 
-        user = db.session.query(User).filter_by(phone_number=call.from_phone).first()
-        if user and user.push_notifications_enabled and user.fcm_token:
-            call_data = {
-                'id': call.id,
-                'callDate': call.call_date.isoformat() if call.call_date else '',
-                'fromPhone': call.from_phone or '',
-                'toPhone': '',
-                'recordingDuration': call.recording_duration or 0,
-                'recordingStatus': call.recording_status or '',
-                'recordingUrl': call.recording_url or '',
-                'summary': call.summary or '',
-                'title': call.title or '',
-                'transcriptionStatus': call.transcription_status or 'pending',
-                'transcriptionText': call.transcription_text or ''
-            }
-
-            success = push_notification_service.send_recording_complete_notification(
-                user.fcm_token,
-                call_data
-            )
-
-            if success:
-                print(f"Recording complete notification sent to user {user.id} for call {call.id}")
-            else:
-                print(f"Failed to send recording complete notification to user {user.id}")
-
         return jsonify("Transcribe was successfully saved."), 200
     except Exception as e:
-        print(f"Error generating summary/title for call UUID {call_uuid}: {str(e)}")
+        print(f"Error saving transcript for call UUID {call_uuid}: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/record-complete', methods=['POST'])
@@ -574,9 +507,38 @@ def record_complete():
     recording_length = body.get('RecordingDuration')
     
     call = db.session.query(Call).filter_by(id=call_uuid).first()
+    user = db.session.query(User).filter_by(id=call.user_id).first()
     
     if not call:
         return jsonify({'error': 'Call not found'}), 404
+
+    if user and user.push_notifications_enabled and user.fcm_token:
+        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
+        transcription_status = transcript.status if transcript else 'pending'
+        transcription_text = transcript.text if transcript else ''
+        call_data = {
+            'id': call.id,
+            'callDate': call.call_date.isoformat() if call.call_date else '',
+            'fromPhone': call.from_phone or '',
+            'toPhone': '',
+            'recordingDuration': call.recording_duration or 0,
+            'recordingStatus': call.recording_status or '',
+            'recordingUrl': call.recording_url or '',
+            'summary': call.summary or '',
+            'title': call.title or '',
+            'transcriptionStatus': transcription_status,
+            'transcriptionText': transcription_text
+        }
+
+        success = push_notification_service.send_recording_complete_notification(
+            user.fcm_token,
+            call_data
+        )
+
+        if success:
+            print(f"Recording complete notification sent to user {user.id} for call {call.id}")
+        else:
+            print(f"Failed to send recording complete notification to user {user.id}")
     
     if call.recording_status == 'completed' and call.recording_url:
         print(f"Recording already processed for call UUID: {call_uuid}")
