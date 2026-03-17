@@ -348,24 +348,6 @@ def get_service_phone_number(country_code):
         'phoneNumber': phone_number
     }), 200
 
-@app.route('/debug/calls', methods=['GET'])
-def debug_calls():
-    """Debug endpoint to see all calls in the database."""
-    try:
-        calls = db.session.query(Call).all()
-        calls_list = []
-        for call in calls:
-            calls_list.append({
-                'id': call.id,
-                'from_phone': call.from_phone,
-                'recording_url': call.recording_url,
-                'recording_status': call.recording_status,
-                'call_date': call.call_date.isoformat() if call.call_date else None
-            })
-        return jsonify(calls_list), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/recording/<recording_id>', methods=['GET'])
 def get_recording(recording_id):
     """Proxy endpoint to serve Twilio recordings with authentication."""
@@ -578,6 +560,7 @@ def record_complete():
 
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
+    """Handle incoming call and record (e.g. for merge-call recording). Returns TwiML."""
     body = get_formated_body()
     response = VoiceResponse()
 
@@ -610,86 +593,16 @@ def answer():
         response.say("The recording has started.")
         return Response(str(response), mimetype='text/xml')
 
-    conference_name = f"rec-{call_sid}"
-
-    response.say("You are in the recording conference. Add the other party to the recording. The call will be recorded.", voice="alice")
-
-    dial = Dial()
-
-    dial.conference(
-        conference_name,
-        start_conference_on_enter=True,
-        end_conference_on_exit=True,
-        beep=False,
-        record="record-from-start",
+    response.record(
+        play_beep=True,
+        max_length=5400,
+        transcribe=False,
         recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
         recording_status_callback_event="completed",
+        timeout=30
     )
-    response.append(dial)
 
     return Response(str(response), mimetype='text/xml')
-
-@app.route("/conference-join", methods=["GET", "POST"])
-def conference_join():
-    """TwiML to dial a participant into an existing conference (e.g. when adding the other party).
-    Query param: name = conference friendly name (e.g. rec-{CallSid}).
-    Joined participant does not start/end the conference (not moderator).
-    """
-    conference_name = request.args.get("name") or (get_formated_body() or {}).get("name")
-    response = VoiceResponse()
-    if not conference_name:
-        response.say("Conference not found. Goodbye.")
-        response.hangup()
-        return Response(str(response), mimetype="text/xml")
-
-    dial = Dial()
-    dial.conference(
-        conference_name,
-        start_conference_on_enter=False,
-        end_conference_on_exit=False,
-        beep=True,
-    )
-    response.append(dial)
-    return Response(str(response), mimetype="text/xml")
-
-
-@app.route("/api/conference/add-participant", methods=["POST"])
-def add_conference_participant():
-    """Add a participant to an active conference (the call started by the moderator).
-    Body: call_sid (Twilio Call SID of the moderator's call), to_number (E.164).
-    The moderator is the person who called our service number; their CallSid is the conference id (rec-{CallSid}).
-    """
-    if not twilio_client:
-        return jsonify({"error": "Twilio is not configured"}), 500
-
-    body = get_formated_body() or {}
-    call_sid = body.get("call_sid") or body.get("callSid")
-    to_number = (body.get("to_number") or body.get("toNumber") or "").strip()
-
-    if not call_sid:
-        return jsonify({"error": "call_sid is required"}), 400
-    if not to_number:
-        return jsonify({"error": "to_number is required"}), 400
-
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER")
-    if not from_number:
-        return jsonify({"error": "TWILIO_PHONE_NUMBER environment variable is not set"}), 500
-
-    conference_name = f"rec-{call_sid}"
-    join_url = f"{HOST}/conference-join?name={conference_name}"
-
-    try:
-        outbound = twilio_client.calls.create(
-            to=to_number,
-            from_=from_number,
-            url=join_url,
-            method="POST",
-        )
-        return jsonify({"message": "Participant invited", "call_sid": outbound.sid}), 200
-    except Exception as e:
-        print(f"Add conference participant error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     with app.app_context():
