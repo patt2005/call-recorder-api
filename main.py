@@ -507,11 +507,10 @@ def record_complete():
     recording_length = body.get('RecordingDuration')
     
     call = db.session.query(Call).filter_by(id=call_uuid).first()
-    user = db.session.query(User).filter_by(id=call.user_id).first()
-    
     if not call:
         return jsonify({'error': 'Call not found'}), 404
 
+    user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
     if user and user.push_notifications_enabled and user.fcm_token:
         transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
         transcription_status = transcript.status if transcript else 'pending'
@@ -604,94 +603,24 @@ def answer():
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
 
     if not existing_call:
-        call = Call(call_uuid, user_phone, datetime.now())
+        user = db.session.query(User).filter_by(phone_number=user_phone).first()
+        call = Call(call_uuid, user_phone, datetime.now(), user_id=user.id if user else None)
         db.session.add(call)
         db.session.commit()
         print(f"Created new call record with CallSid: {call_sid}")
     else:
         print(f"Get another postback from TWILIO: {body}")
-        return Response(str(" "), mimetype='text/xml')
+        response.say("The recording has started.")
+        return Response(str(response), mimetype='text/xml')
 
-    response.say("The recording has started.")
     response.record(
-        play_beep=False,
+        play_beep=True,
         max_length=5400,
         transcribe=False,
         recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
         recording_status_callback_event="completed"
     )
 
-    return Response(str(response), mimetype='text/xml')
-
-
-@app.route("/answer-dial", methods=["GET", "POST"])
-def answer_dial():
-    """
-    Handle incoming call, then dial another number with recording.
-    Uses a 60-second ring timeout so the call does not drop after 5 seconds.
-    Expects the number to dial in form/query: 'To' or 'to' (e.g. +1234567890).
-    """
-    body = get_formated_body()
-    if not body:
-        return jsonify({'error': 'Body parameter is required'}), 400
-
-    user_phone = body.get('From')
-    call_sid = body.get('CallSid')
-    to_number = body.get('To') or body.get('to') or request.args.get('to') or request.args.get('To')
-
-    if not user_phone:
-        return jsonify({'error': 'User phone parameter is required'}), 400
-    if not to_number:
-        return jsonify({'error': 'To number is required (form or query: To or to)'}), 400
-
-    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
-    if existing_call:
-        print(f"Call {call_sid} already exists, not creating duplicate")
-    else:
-        call_uuid = call_sid
-        call = Call(call_uuid, user_phone, datetime.now())
-        db.session.add(call)
-        db.session.commit()
-        print(f"Created new call record with CallSid: {call_sid}")
-
-    call_uuid = call_sid
-    response = VoiceResponse()
-    response.say("The recording has started. Please wait while we connect your call.")
-
-    # Ring for up to 60 seconds so the call does not drop after 5 seconds.
-    dial = Dial(
-        timeout=60,
-        record="record-from-answer",
-        action=f"{HOST}/dial-action?call-uuid={call_uuid}",
-        recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
-        recording_status_callback_event="completed",
-        method="POST",
-    )
-    dial.number(to_number.strip())
-    response.append(dial)
-
-    return Response(str(response), mimetype='text/xml')
-
-
-@app.route("/dial-action", methods=["GET", "POST"])
-def dial_action():
-    """
-    Twilio calls this when the Dial ends (answered, no-answer, busy, etc.).
-    Return TwiML to hang up or say a message (e.g. "The party did not answer").
-    """
-    body = get_formated_body()
-    dial_status = (body or {}).get('DialCallStatus', '')
-    if dial_status == 'no-answer':
-        response = VoiceResponse()
-        response.say("The party did not answer. Goodbye.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-    if dial_status == 'completed':
-        response = VoiceResponse()
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-    response = VoiceResponse()
-    response.hangup()
     return Response(str(response), mimetype='text/xml')
 
 if __name__ == "__main__":
