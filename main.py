@@ -489,6 +489,17 @@ def record_complete():
         return jsonify({'error': 'Call not found'}), 404
 
     user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
+    if user is None and call.from_phone:
+        user = (
+            db.session.query(User)
+            .filter_by(phone_number=call.from_phone)
+            .order_by(User.created_at.asc())
+            .first()
+        )
+        if user:
+            call.user_id = user.id
+            db.session.commit()
+
     if user and user.push_notifications_enabled and user.fcm_token:
         transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
         transcription_status = transcript.status if transcript else 'pending'
@@ -577,9 +588,9 @@ def answer():
 
     call_uuid = call_sid
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
+    user = db.session.query(User).filter_by(phone_number=user_phone).first()
 
     if not existing_call:
-        user = db.session.query(User).filter_by(phone_number=user_phone).first()
         call = Call(call_uuid, user_phone, datetime.now(), user_id=user.id if user else None)
         db.session.add(call)
         db.session.commit()
@@ -588,15 +599,14 @@ def answer():
         print(f"Get another postback from TWILIO: {body}")
         return Response(str(response), mimetype='text/xml')
 
-    response.say("The recording has started.")
-
+    # No <Say> here: TTS before <Record> is heard on the line and is included in the MP3.
     response.record(
         play_beep=False,
         max_length=5400,
         transcribe=False,
         recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
         recording_status_callback_event="completed",
-        timeout=45
+        timeout=50,
     )
 
     return Response(str(response), mimetype='text/xml')
