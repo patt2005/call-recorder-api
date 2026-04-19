@@ -325,20 +325,16 @@ def update_notification_settings():
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
-    if country_code == "US":
-        phone_number = "+19865294217"
-    elif country_code == "FR":
-        phone_number = "+19865294217"
-    elif country_code == "HU":
-        phone_number = "+19865294217"
-    elif country_code == "RO":
-        phone_number = "+19865294217"
-    elif country_code == "PL":
-        phone_number = "+19865294217"
-    elif country_code == "CZ":
-        phone_number = "+19865294217"
+    us_number = "+19865294217"
+    uk_number = "+441514533006"
+
+    # Countries that should use the US number
+    us_countries = {"US", "JP", "KR"}
+
+    if country_code in us_countries:
+        phone_number = us_number
     else:
-        phone_number = "+19865294217"
+        phone_number = uk_number
 
     return jsonify({
         'phoneNumber': phone_number
