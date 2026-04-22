@@ -28,7 +28,10 @@ def run_migration(command):
             print("Migration repository initialized successfully!")
             
         elif command == 'migrate':
-            message = input("Enter migration message: ")
+            if len(sys.argv) > 2:
+                message = sys.argv[2]
+            else:
+                message = input("Enter migration message: ")
             print(f"Creating migration: {message}")
             migrate(message=message)
             print("Migration created successfully!")

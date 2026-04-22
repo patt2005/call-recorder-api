@@ -9,6 +9,7 @@ class User(db.Model):
     __tablename__ = 'users'
     
     id = Column(UUID(as_uuid=True), unique=True, primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=True)
     phone_number = Column(String, nullable=False)
     country_code = Column(String, nullable=False)
     fcm_token = Column(String, nullable=True)
@@ -19,6 +20,7 @@ class User(db.Model):
     def to_dict(self):
         return {
             'userId': str(self.id),
+            'name': self.name,
             'phoneNumber': self.phone_number,
             'countryCode': self.country_code,
             'fcmToken': self.fcm_token,

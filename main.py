@@ -243,6 +243,7 @@ def get_user(user_id):
             return jsonify({'error': 'User not found'}), 404
         
         return jsonify({
+            'name': user.name,
             'phoneNumber': user.phone_number,
             'countryCode': user.country_code if user.country_code else '',
             'notificationsEnabled': user.push_notifications_enabled
@@ -255,35 +256,41 @@ def get_user(user_id):
 def update_user_phone():
     try:
         body = get_formated_body()
-        
+
         user_id = body.get('userId')
         phone_number = body.get('phoneNumber')
         country_code = body.get('countryCode')
-        
+        name = body.get('name')
+
         if not user_id:
             return jsonify({'error': 'userId is required'}), 400
-        
+
         if not phone_number:
             return jsonify({'error': 'phoneNumber is required'}), 400
-            
+
         if not country_code:
             return jsonify({'error': 'countryCode is required'}), 400
-        
+
         user = db.session.query(User).filter_by(id=user_id).first()
-        
+
         if not user:
             return jsonify({'error': 'User not found'}), 404
-        
+
         user.phone_number = phone_number
         user.country_code = country_code
+
+        # Update name if provided
+        if name is not None:
+            user.name = name
+
         user.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
         return jsonify({
-            'message': 'Phone number updated successfully',
+            'message': 'User updated successfully',
             'userId': str(user.id)
         }), 200
-        
+
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
