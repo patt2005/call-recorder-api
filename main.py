@@ -616,6 +616,15 @@ def answer():
 
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()
+        from flask_migrate import upgrade
+        try:
+            # Apply any pending migrations automatically
+            upgrade()
+            print("Database migrations applied successfully")
+        except Exception as e:
+            print(f"Migration error: {e}")
+            # Fallback to create_all if migrations haven't been initialized
+            db.create_all()
+            print("Database tables created using create_all()")
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
