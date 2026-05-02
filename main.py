@@ -17,6 +17,7 @@ from models.call_transcript import CallTranscript
 from models.user import User
 from services.push_notification_service import push_notification_service
 from services.transcript_service import TranscriptService
+from services.notification_scheduler import NotificationScheduler
 
 HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
@@ -626,5 +627,9 @@ if __name__ == "__main__":
             # Fallback to create_all if migrations haven't been initialized
             db.create_all()
             print("Database tables created using create_all()")
+
+    scheduler = NotificationScheduler(app)
+    scheduler.start()
+
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
