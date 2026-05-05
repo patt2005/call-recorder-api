@@ -335,12 +335,13 @@ def get_service_phone_number(country_code):
 
     us_number = "+19865294217"
     uk_number = "+441514533006"
-
-    # Countries that should use the US number
+    ro_number = "+40373814965"
     us_countries = {"US", "JP", "KR"}
 
     if country_code in us_countries:
         phone_number = us_number
+    elif country_code == "RO":
+        phone_number = ro_number
     else:
         phone_number = uk_number
 
