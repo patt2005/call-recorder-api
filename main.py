@@ -28,6 +28,10 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if (TWILIO_ACCOUNT
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
 
 CORS(app, origins=[HOST])
 
@@ -327,6 +331,17 @@ def update_notification_settings():
         
     except Exception as e:
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.post('/api/notifications/test', methods=['POST'])
+def test_notification():
+    try:
+        body = get_formated_body()
+        fcm_token = body.get('fcm_token')
+
+        success = push_notification_service.send_notification(fcm_token, "Test", "This is a test notification")
+        return jsonify({'success': success}), 200
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/service/phone/<country_code>', methods=['GET'])
