@@ -333,7 +333,7 @@ def update_notification_settings():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.post('/api/notifications/test', methods=['POST'])
+@app.route('/api/notifications/test', methods=['POST'])
 def test_notification():
     try:
         body = get_formated_body()
