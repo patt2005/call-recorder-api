@@ -333,17 +333,6 @@ def update_notification_settings():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/notifications/test', methods=['POST'])
-def test_notification():
-    try:
-        body = get_formated_body()
-        fcm_token = body.get('fcm_token')
-
-        success = push_notification_service.send_notification(fcm_token, "Test", "This is a test notification")
-        return jsonify({'success': success}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/service/phone/<country_code>', methods=['GET'])
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
