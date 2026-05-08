@@ -133,6 +133,7 @@ class NotificationScheduler:
         self.start()
 
     def start(self):
+        print("NotificationScheduler starting....")
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -142,7 +143,7 @@ class NotificationScheduler:
         #     daemon=True,
         # )
         # self._thread.start()
-        print("NotificationScheduler starting....")
+
         logger.info(
             "NotificationScheduler started — fires daily at %02d:00 ET",
             TARGET_HOUR_ET,
