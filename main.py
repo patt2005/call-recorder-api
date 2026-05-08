@@ -633,8 +633,5 @@ if __name__ == "__main__":
             db.create_all()
             print("Database tables created using create_all()")
 
-    scheduler = NotificationScheduler(app)
-    scheduler.start()
-
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)

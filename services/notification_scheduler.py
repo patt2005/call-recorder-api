@@ -130,6 +130,7 @@ class NotificationScheduler:
         self._last_sent_date: datetime.date | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self.start()
 
     def start(self):
         if self._thread and self._thread.is_alive():
