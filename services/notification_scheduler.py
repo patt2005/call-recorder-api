@@ -7,8 +7,7 @@ revenue and no trial, it sends a randomly chosen promotional push notification.
 """
 
 import threading
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import requests as _requests
@@ -18,9 +17,6 @@ from models.user import User
 from services.notification_copy_data import pick_random_coherent
 from services.push_notification_service import push_notification_service
 
-import logging
-
-logger = logging.getLogger(__name__)
 
 # ── configuration ────────────────────────────────────────────────────────────
 
@@ -51,7 +47,7 @@ def _get_tweb_app_user(user_id: str) -> dict | None:
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
-        logger.warning("tweb lookup failed for user %s: %s", user_id, exc)
+        print(f"tweb lookup failed for user {user_id}: {exc}")
         return None
 
 
@@ -145,9 +141,8 @@ class NotificationScheduler:
         self._thread.start()
 
         print("NotificationScheduler started — fires daily at 03:00 ET")
-        logger.info(
-            "NotificationScheduler started — fires daily at %02d:00 ET",
-            TARGET_HOUR_ET,
+        print(
+            "NotificationScheduler started — fires daily at 02:00 ET"
         )
 
     def stop(self):
@@ -160,7 +155,7 @@ class NotificationScheduler:
             try:
                 self._check_and_run()
             except Exception as exc:
-                logger.error("NotificationScheduler iteration failed: %s", exc, exc_info=True)
+                print(f"NotificationScheduler iteration failed: {exc}")
 
             self._stop_event.wait(POLL_INTERVAL_SECONDS)
 
@@ -169,7 +164,7 @@ class NotificationScheduler:
         today_et = now_et.date()
 
         if now_et.hour != TARGET_HOUR_ET:
-            logger.info(
+            print(
                 "NotificationScheduler is not time to run"
             )
             return
@@ -177,9 +172,8 @@ class NotificationScheduler:
         if self._last_sent_date == today_et:
             return
 
-        logger.info(
-            "NotificationScheduler firing for %s (ET %02d:%02d)",
-            today_et, now_et.hour, now_et.minute,
+        print(
+            "NotificationScheduler firing for %s (ET %02d:%02d)"
         )
 
         with self._app.app_context():
@@ -187,4 +181,4 @@ class NotificationScheduler:
 
         self._last_sent_date = today_et
 
-        logger.info("NotificationScheduler completed — %s", stats)
+        print(f"NotificationScheduler completed — {stats}")
