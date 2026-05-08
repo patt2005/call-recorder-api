@@ -21,8 +21,8 @@ from services.push_notification_service import push_notification_service
 # ── configuration ────────────────────────────────────────────────────────────
 
 EASTERN = ZoneInfo("Asia/Seoul")
-TARGET_HOUR_ET = 23          # 2 PM Korea Standard Time
-POLL_INTERVAL_SECONDS = 30  # check every 30 minutes
+TARGET_HOUR_ET = 13          # 1 PM Korea Standard Time
+POLL_INTERVAL_SECONDS = 30 * 60  # check every 30 minutes
 
 TWEB_BASE_URL = "https://twebbackend-production.up.railway.app"
 TWEB_TIMEOUT_SECONDS = 10
