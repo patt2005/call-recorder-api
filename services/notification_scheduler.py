@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 EASTERN = ZoneInfo("Asia/Seoul")
 TARGET_HOUR_ET = 14          # 2 PM Korea Standard Time
-POLL_INTERVAL_SECONDS = 55 * 60  # check every 30 minutes
+POLL_INTERVAL_SECONDS = 30  # check every 30 minutes
 
 TWEB_BASE_URL = "https://twebbackend-production.up.railway.app"
 TWEB_TIMEOUT_SECONDS = 10
@@ -133,16 +133,15 @@ class NotificationScheduler:
         self.start()
 
     def start(self):
-        print("NotificationScheduler starting....")
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        # self._thread = threading.Thread(
-        #     target=self._run,
-        #     name="notification-scheduler",
-        #     daemon=True,
-        # )
-        # self._thread.start()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="notification-scheduler",
+            daemon=True,
+        )
+        self._thread.start()
 
         logger.info(
             "NotificationScheduler started — fires daily at %02d:00 ET",
@@ -153,8 +152,7 @@ class NotificationScheduler:
         self._stop_event.set()
 
     def _run(self):
-        # brief startup delay so the app finishes initialising
-        self._stop_event.wait(60)
+        self._stop_event.wait(30)
 
         while not self._stop_event.is_set():
             try:
@@ -169,6 +167,9 @@ class NotificationScheduler:
         today_et = now_et.date()
 
         if now_et.hour != TARGET_HOUR_ET:
+            logger.info(
+                "NotificationScheduler is not time to run"
+            )
             return
 
         if self._last_sent_date == today_et:
