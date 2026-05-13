@@ -13,6 +13,7 @@ class User(db.Model):
     phone_number = Column(String, nullable=False)
     country_code = Column(String, nullable=False)
     fcm_token = Column(String, nullable=True)
+    language = Column(String, nullable=True)
     push_notifications_enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -25,6 +26,7 @@ class User(db.Model):
             'countryCode': self.country_code,
             'fcmToken': self.fcm_token,
             'pushNotificationsEnabled': self.push_notifications_enabled,
+            'language': self.language,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None
         }

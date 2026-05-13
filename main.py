@@ -201,6 +201,7 @@ def register_user():
         phone_number = body.get('phoneNumber')
         country_code = body.get('countryCode')
         fcm_token = body.get('fcmToken')
+        language = body.get('language')
         
         if not phone_number:
             return jsonify({'error': 'phoneNumber is required'}), 400
@@ -214,6 +215,8 @@ def register_user():
             existing_user.fcm_token = fcm_token
             if country_code:
                 existing_user.country_code = country_code
+            if language is not None:
+                existing_user.language = language
             existing_user.updated_at = datetime.now()
             existing_user.phone_number = phone_number
             db.session.commit()
@@ -226,7 +229,8 @@ def register_user():
             new_user = User(
                 id=id,
                 phone_number=phone_number,
-                fcm_token=fcm_token
+                fcm_token=fcm_token,
+                language=language
             )
             if country_code:
                 new_user.country_code = country_code
