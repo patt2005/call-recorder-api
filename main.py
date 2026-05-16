@@ -18,6 +18,7 @@ from models.user import User
 from services.push_notification_service import push_notification_service
 from services.transcript_service import TranscriptService
 from services.notification_scheduler import NotificationScheduler
+from services.notification_copy_data import pick_random_coherent
 
 HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
 CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
@@ -338,6 +339,26 @@ def update_notification_settings():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/notifications/test', methods=['POST'])
+def send_test_notification():
+    """Send a test promotional notification to the given FCM token using localized copy."""
+    body = get_formated_body()
+
+    fcm_token = body.get('fcmToken')
+    language = body.get('language')
+
+    if not fcm_token:
+        return jsonify({'error': 'fcmToken is required'}), 400
+
+    title, notification_body = pick_random_coherent(language=language)
+    ok = push_notification_service.send_notification(fcm_token, title, notification_body)
+
+    if ok:
+        return jsonify({'success': True, 'title': title, 'body': notification_body}), 200
+    else:
+        return jsonify({'success': False, 'error': 'Failed to send notification'}), 500
+
 
 @app.route('/api/service/phone/<country_code>', methods=['GET'])
 def get_service_phone_number(country_code):
