@@ -2,6 +2,448 @@ import random as _random
 from typing import Tuple
 
 
+# ── Localized themes ──────────────────────────────────────────────────────────
+# Keys are ISO 639-1 language codes. Falls back to English ("en") if the
+# user's language is not listed here.
+
+LOCALIZED_THEMES: dict[str, list[dict]] = {
+    "ja": [
+        {
+            "name": "FreeLimit",
+            "titles": [
+                "5件の録音では足りませんか？",
+                "無料の上限に達しましたか？",
+                "録音の枠がいっぱいになりましたか？",
+                "もっと録音が必要ですか？",
+                "無料プランに制限を感じていますか？",
+            ],
+            "bodies": [
+                "Proにアップグレードして、制限なしにすべての通話を録音しましょう",
+                "CallRecorder Proなら通話録音が無制限。ずっと使えます",
+                "上限を解除するにはアップグレードをタップ",
+                "CallRecorder Proに上限はありません。永遠に",
+                "Proに切り替えて、もう制限を気にしないで",
+            ],
+        },
+        {
+            "name": "AiTranscription",
+            "titles": [
+                "通話を瞬時にテキスト化",
+                "AIがすべての通話を文字起こし",
+                "AIに通話メモを任せよう",
+                "スマートな通話文字起こし",
+                "話したことをすぐにテキストに",
+            ],
+            "bodies": [
+                "Proを使えば、どんな通話もすぐに正確なテキストに変換されます",
+                "ProですべてのAI文字起こしと要約を取得",
+                "毎週何時間も節約 — Proが通話を文字起こしします",
+                "Proが通話録音を読んでメモを書いてくれます",
+                "AIがすべての通話から重要なポイントを抜き出します",
+            ],
+        },
+        {
+            "name": "UpgradeCta",
+            "titles": [
+                "今すぐCallRecorder Proを試す",
+                "ワンタップでアップグレード",
+                "今日からProを始めよう",
+                "無制限へのスイッチ",
+                "CallRecorder Proを有効化",
+            ],
+            "bodies": [
+                "アプリを開いてアップグレードをタップ — Proがスタートします",
+                "ワンタップで、制限なしに通話を録音できます",
+                "タップしてアップグレードし、Proのすべてを解放しましょう",
+                "今すぐProを取得して、今日から通話を録音",
+                "数秒でProを有効化 — すぐに無制限の録音を開始",
+            ],
+        },
+        {
+            "name": "DontLoseDetails",
+            "titles": [
+                "大切な通話を逃さないで",
+                "重要な詳細を見逃さない",
+                "次のビッグディールには録音が必要",
+                "すべてを記録 — 何も忘れない",
+                "通話の内容を永久に保存",
+            ],
+            "bodies": [
+                "Proでいつでも制限なくすべての通話を録音",
+                "詳細が消える前にProですべての会話をキャプチャ",
+                "ProがすべてのAI文字起こしと要約を保存します",
+                "脳を解放。Proがすべての通話を覚えてくれます",
+                "重要な通話はいつでも来る — Proはその瞬間に対応",
+            ],
+        },
+        {
+            "name": "Productivity",
+            "titles": [
+                "毎週何時間も節約",
+                "通話メモのタイピングをやめよう",
+                "通話録音を簡単に",
+                "もっと録音、もっと効率的に",
+                "Proでもっと多くのことを成し遂げる",
+            ],
+            "bodies": [
+                "ProのAI文字起こしで毎週何時間も節約",
+                "通話メモのタイピングをやめて — Proがすべてをテキスト化",
+                "通話を録音。Proがメモをあなたより速く書いてくれます",
+                "Proで通話録音を簡単に、メモを自動化",
+                "タイピングが減れば、大切なことに集中できます",
+            ],
+        },
+    ],
+    "hu": [
+        {
+            "name": "FreeLimit",
+            "titles": [
+                "5 felvétel nem elég?",
+                "Elérted az ingyenes korlátot?",
+                "Megtelt a szabad kvóta?",
+                "Több felvételre van szükséged?",
+                "Szűk az ingyenes csomag?",
+            ],
+            "bodies": [
+                "Frissíts Próra, és korlátlanul rögzíts minden hívást",
+                "A CallRecorder Pro korlátlan hívásrögzítést kínál — örökre",
+                "Érintsd meg a frissítés gombot a korlát eltávolításához",
+                "A CallRecorder Prónak nincs rögzítési korlátja — soha",
+                "Válts Próra, és soha többé ne ütközz korlátba",
+            ],
+        },
+        {
+            "name": "AiTranscription",
+            "titles": [
+                "Hívásaid azonnal szöveggé alakítva",
+                "AI-átiratok minden hívásról",
+                "Bízd az AI-ra a hívási jegyzeteket",
+                "Okos hívásátírás egy érintéssel",
+                "Hívásból szöveg másodpercek alatt",
+            ],
+            "bodies": [
+                "A Pro bármely hívásrögzítést másodpercek alatt pontos szöveggé alakít",
+                "Teljes átiratokat és AI-összefoglalókat kaphatsz minden hívásról Próval",
+                "Spórolj heti órákat — a Pro átírja helyetted a hívásaidat",
+                "A Pro elolvassa a hívásrögzítéseket, és megírja a jegyzeteket",
+                "Az AI összefoglalók kiemelnek mindent, ami valóban számít",
+            ],
+        },
+        {
+            "name": "UpgradeCta",
+            "titles": [
+                "Próbáld ki most a CallRecorder Prót",
+                "Frissítés egy érintéssel",
+                "Szerezd meg a Prót ma",
+                "Kapcsolj korlátlan módra",
+                "Aktiváld a CallRecorder Prót",
+            ],
+            "bodies": [
+                "Nyisd meg az appot és érintsd meg a frissítést a Pro élményhez",
+                "Egy érintéssel korlátlanul rögzíthetsz minden hívást",
+                "Érintsd meg a frissítést, és old fel mindent, amit a Pro kínál",
+                "Szerezd meg a Prót most, és kezdj el ma hívásokat rögzíteni",
+                "Aktiváld a Prót másodpercek alatt — azonnal korlátlan rögzítés",
+            ],
+        },
+        {
+            "name": "DontLoseDetails",
+            "titles": [
+                "Ne veszíts el fontos hívást",
+                "Ne csússzon el egyetlen kulcsinformáció sem",
+                "A következő nagy üzletedhez felvétel kell",
+                "Rögzíts mindent — felejtsd el a felejtést",
+                "Minden hívás rögzítve, örökre",
+            ],
+            "bodies": [
+                "A Pro lehetővé teszi, hogy bármikor, korlátlanul rögzíts minden hívást",
+                "Ragadj meg minden beszélgetést, mielőtt a részletek elillannak",
+                "A Pro minden hívásrögzítést megment — hívásaid örökké élnek",
+                "Szabadítsd fel az agyadat. Hadd emlékezzen a Pro minden hívásra",
+                "Fontos hívások nem várnak — a Pro készen áll, amikor jönnek",
+            ],
+        },
+        {
+            "name": "Productivity",
+            "titles": [
+                "Spórolj heti órákat",
+                "Hagyd abba a hívási jegyzetek gépelését",
+                "Hívásrögzítés könnyedén",
+                "Több rögzítés, kevesebb gépelés",
+                "Végezz többet a Próval",
+            ],
+            "bodies": [
+                "A Pro heti órákat spórol AI hívásátírással",
+                "Hagyd abba a gépelést — a Pro minden hívást szöveggé alakít",
+                "Rögzítsd a hívásaidat. A Pro nálad gyorsabban írja meg a jegyzeteket",
+                "A Pro könnyűvé teszi a hívásrögzítést és automatizálja a jegyzeteket",
+                "Kevesebb gépelés több időt jelent arra, ami igazán fontos",
+            ],
+        },
+    ],
+    "pt": [
+        {
+            "name": "FreeLimit",
+            "titles": [
+                "5 gravações não são suficientes?",
+                "Atingiu o limite gratuito?",
+                "Sua cota gratuita acabou?",
+                "Precisa de mais gravações?",
+                "O plano gratuito é limitado demais?",
+            ],
+            "bodies": [
+                "Atualize para o Pro e grave todas as chamadas sem limite",
+                "O CallRecorder Pro oferece gravações ilimitadas — para sempre",
+                "Toque em atualizar para remover o limite de gravações",
+                "O CallRecorder Pro não tem limite de gravações — nunca",
+                "Mude para o Pro e nunca mais atinja um limite",
+            ],
+        },
+        {
+            "name": "AiTranscription",
+            "titles": [
+                "Transforme suas chamadas em texto na hora",
+                "Transcrições com IA de todas as chamadas",
+                "Deixe a IA cuidar das suas anotações",
+                "Transcrição inteligente com um toque",
+                "Chamada para texto em segundos",
+            ],
+            "bodies": [
+                "O Pro transforma qualquer gravação em texto preciso em segundos",
+                "Obtenha transcrições completas e resumos com IA de cada chamada",
+                "Economize horas por semana — o Pro transcreve suas chamadas",
+                "O Pro lê suas gravações e escreve as anotações",
+                "Os resumos de IA destacam o que realmente importa em cada chamada",
+            ],
+        },
+        {
+            "name": "UpgradeCta",
+            "titles": [
+                "Experimente o CallRecorder Pro agora",
+                "Atualize com um toque",
+                "Obtenha o Pro hoje",
+                "Ative o ilimitado",
+                "Ative o CallRecorder Pro",
+            ],
+            "bodies": [
+                "Abra o app e toque em atualizar para começar sua experiência Pro",
+                "Um toque e você grava todas as chamadas sem limite",
+                "Toque para atualizar e desbloquear tudo que o Pro oferece",
+                "Obtenha o Pro agora e comece a gravar todas as chamadas hoje",
+                "Ative o Pro em segundos — grave chamadas ilimitadas em segundos",
+            ],
+        },
+        {
+            "name": "DontLoseDetails",
+            "titles": [
+                "Não perca outra chamada importante",
+                "Não deixe os detalhes escaparem",
+                "Seu próximo grande negócio precisa de uma gravação",
+                "Capture tudo — esqueça o esquecimento",
+                "Cada chamada gravada, para sempre",
+            ],
+            "bodies": [
+                "O Pro permite gravar todas as chamadas, a qualquer hora — sem limites",
+                "Capture cada conversa antes que os detalhes desapareçam com o Pro",
+                "O Pro salva cada gravação — suas chamadas vivem para sempre",
+                "Libere sua mente. Deixe o Pro lembrar de cada chamada por você",
+                "Chamadas importantes não esperam — o Pro está pronto quando acontecem",
+            ],
+        },
+        {
+            "name": "Productivity",
+            "titles": [
+                "Economize horas toda semana",
+                "Pare de digitar anotações de chamadas",
+                "Gravação de chamadas sem esforço",
+                "Mais gravações, menos digitação",
+                "Faça mais com o Pro",
+            ],
+            "bodies": [
+                "O Pro economiza horas por semana com transcrição de chamadas com IA",
+                "Pare de digitar — o Pro transforma cada chamada em texto",
+                "Grave suas chamadas. O Pro escreve as anotações mais rápido que você",
+                "O Pro torna a gravação fácil e as anotações automáticas",
+                "Menos digitação significa mais tempo para o que realmente importa",
+            ],
+        },
+    ],
+    "ro": [
+        {
+            "name": "FreeLimit",
+            "titles": [
+                "5 înregistrări nu sunt suficiente?",
+                "Ai atins limita gratuită?",
+                "Ți s-a umplut cota gratuită?",
+                "Ai nevoie de mai multe înregistrări?",
+                "Planul gratuit e prea limitat?",
+            ],
+            "bodies": [
+                "Treci la Pro și înregistrează orice apel fără limite",
+                "CallRecorder Pro îți oferă înregistrări nelimitate — pentru totdeauna",
+                "Apasă pe upgrade pentru a elimina limita de înregistrări",
+                "CallRecorder Pro nu are limită de înregistrări — niciodată",
+                "Treci la Pro și nu mai da peste nicio limită",
+            ],
+        },
+        {
+            "name": "AiTranscription",
+            "titles": [
+                "Transformă apelurile în text instant",
+                "Transcrieri AI pentru fiecare apel",
+                "Lasă AI-ul să se ocupe de notițele tale",
+                "Transcriere inteligentă cu o singură atingere",
+                "Apel transformat în text în câteva secunde",
+            ],
+            "bodies": [
+                "Pro transformă orice înregistrare în text precis în câteva secunde",
+                "Obții transcrieri complete și rezumate AI pentru fiecare apel cu Pro",
+                "Economisești ore în fiecare săptămână — Pro transcrie apelurile tale",
+                "Pro citește înregistrările și scrie notițele pentru tine",
+                "Rezumatele AI evidențiază ceea ce contează cu adevărat în fiecare apel",
+            ],
+        },
+        {
+            "name": "UpgradeCta",
+            "titles": [
+                "Încearcă CallRecorder Pro acum",
+                "Upgrade cu o singură atingere",
+                "Obține Pro azi",
+                "Activează nelimitatul",
+                "Activează CallRecorder Pro",
+            ],
+            "bodies": [
+                "Deschide aplicația și apasă upgrade pentru a începe experiența Pro",
+                "O singură atingere și înregistrezi orice apel fără limite",
+                "Apasă pentru upgrade și deblochează tot ce oferă Pro",
+                "Obține Pro acum și începe să înregistrezi fiecare apel azi",
+                "Activează Pro în câteva secunde — înregistrări nelimitate imediat",
+            ],
+        },
+        {
+            "name": "DontLoseDetails",
+            "titles": [
+                "Nu mai pierde apeluri importante",
+                "Nu lăsa detaliile cheie să dispară",
+                "Următoarea ta mare afacere are nevoie de o înregistrare",
+                "Capturează totul — uită că uiți",
+                "Fiecare apel înregistrat, pentru totdeauna",
+            ],
+            "bodies": [
+                "Pro îți permite să înregistrezi orice apel, oricând — fără limite",
+                "Captează fiecare conversație înainte ca detaliile să dispară cu Pro",
+                "Pro salvează fiecare înregistrare — apelurile tale trăiesc pentru totdeauna",
+                "Eliberează-ți mintea. Lasă Pro să țină minte fiecare apel pentru tine",
+                "Apelurile importante nu așteaptă — Pro este gata când se întâmplă",
+            ],
+        },
+        {
+            "name": "Productivity",
+            "titles": [
+                "Economisește ore în fiecare săptămână",
+                "Nu mai scrie notițe de apeluri",
+                "Înregistrare de apeluri fără efort",
+                "Mai multe înregistrări, mai puțin scris",
+                "Realizează mai mult cu Pro",
+            ],
+            "bodies": [
+                "Pro economisește ore pe săptămână cu transcriere AI a apelurilor",
+                "Nu mai scrie — Pro transformă fiecare apel în text",
+                "Înregistrează apelurile. Pro scrie notițele mai repede decât tine",
+                "Pro face înregistrarea ușoară și notițele automate",
+                "Mai puțin scris înseamnă mai mult timp pentru ce contează cu adevărat",
+            ],
+        },
+    ],
+    "ko": [
+        {
+            "name": "FreeLimit",
+            "titles": [
+                "녹음 5개로는 부족하신가요?",
+                "무료 한도에 도달하셨나요?",
+                "무료 녹음이 가득 찼나요?",
+                "더 많은 녹음이 필요하신가요?",
+                "무료 플랜이 너무 제한적인가요?",
+            ],
+            "bodies": [
+                "Pro로 업그레이드하여 제한 없이 모든 통화를 녹음하세요",
+                "CallRecorder Pro는 무제한 통화 녹음을 제공합니다 — 영원히",
+                "업그레이드를 탭하여 녹음 한도를 제거하세요",
+                "CallRecorder Pro에는 녹음 한도가 없습니다 — 영원히",
+                "Pro로 전환하고 다시는 한도에 부딪히지 마세요",
+            ],
+        },
+        {
+            "name": "AiTranscription",
+            "titles": [
+                "통화를 즉시 텍스트로 변환",
+                "모든 통화의 AI 자막",
+                "AI가 통화 메모를 처리하게 하세요",
+                "한 번의 탭으로 스마트 통화 자막",
+                "몇 초 만에 통화를 텍스트로",
+            ],
+            "bodies": [
+                "Pro는 모든 통화 녹음을 몇 초 만에 정확한 텍스트로 변환합니다",
+                "Pro로 모든 통화의 전체 자막과 AI 요약을 받으세요",
+                "매주 몇 시간 절약 — Pro가 통화를 자막 처리합니다",
+                "Pro가 통화 녹음을 읽고 메모를 작성합니다",
+                "AI 요약이 각 통화에서 실제로 중요한 것을 강조합니다",
+            ],
+        },
+        {
+            "name": "UpgradeCta",
+            "titles": [
+                "지금 CallRecorder Pro를 사용해보세요",
+                "한 번의 탭으로 업그레이드",
+                "오늘 Pro 시작하기",
+                "무제한으로 전환",
+                "CallRecorder Pro 활성화",
+            ],
+            "bodies": [
+                "앱을 열고 업그레이드를 탭하여 Pro 경험을 시작하세요",
+                "한 번의 탭으로 제한 없이 모든 통화를 녹음할 수 있습니다",
+                "업그레이드를 탭하여 Pro가 제공하는 모든 것을 잠금 해제하세요",
+                "지금 Pro를 구매하고 오늘부터 모든 통화를 녹음하세요",
+                "몇 초 만에 Pro 활성화 — 바로 무제한 녹음 시작",
+            ],
+        },
+        {
+            "name": "DontLoseDetails",
+            "titles": [
+                "중요한 통화를 더 이상 놓치지 마세요",
+                "핵심 세부 정보가 사라지지 않게 하세요",
+                "다음 큰 거래에는 녹음이 필요합니다",
+                "모든 것을 캡처 — 아무것도 잊지 마세요",
+                "모든 통화 영원히 녹음",
+            ],
+            "bodies": [
+                "Pro를 사용하면 언제든지 제한 없이 모든 통화를 녹음할 수 있습니다",
+                "세부 정보가 사라지기 전에 Pro로 모든 대화를 캡처하세요",
+                "Pro는 모든 통화 녹음을 저장합니다 — 통화가 영원히 살아있습니다",
+                "뇌를 해방하세요. Pro가 모든 통화를 기억하게 하세요",
+                "중요한 통화는 기다리지 않습니다 — Pro는 항상 준비되어 있습니다",
+            ],
+        },
+        {
+            "name": "Productivity",
+            "titles": [
+                "매주 몇 시간 절약",
+                "통화 메모 타이핑 중단",
+                "손쉬운 통화 녹음",
+                "더 많은 녹음, 더 적은 타이핑",
+                "Pro로 더 많이 성취하세요",
+            ],
+            "bodies": [
+                "Pro는 AI 통화 자막으로 매주 몇 시간을 절약합니다",
+                "타이핑 중단 — Pro가 모든 통화를 텍스트로 변환합니다",
+                "통화를 녹음하세요. Pro가 당신보다 빠르게 메모를 작성합니다",
+                "Pro가 통화 녹음을 쉽게 하고 메모를 자동화합니다",
+                "타이핑이 줄면 실제로 중요한 것에 집중할 시간이 더 많아집니다",
+            ],
+        },
+    ],
+}
+
 THEMES = [
     {
         "name": "FreeLimit",
@@ -276,10 +718,19 @@ THEMES = [
 ]
 
 
-def pick_random_coherent(rng: _random.Random | None = None) -> Tuple[str, str]:
-    """Return a (title, body) pair from the same randomly chosen theme."""
+def pick_random_coherent(
+    rng: _random.Random | None = None,
+    language: str | None = None,
+) -> Tuple[str, str]:
+    """Return a (title, body) pair from the same randomly chosen theme.
+
+    If *language* is a supported ISO 639-1 code (ja, hu, pt, ro, ko) the
+    copy is picked from the matching localized theme list; otherwise English
+    is used.
+    """
     r = rng or _random.Random()
-    theme = r.choice(THEMES)
+    themes = LOCALIZED_THEMES.get(language or "", THEMES)
+    theme = r.choice(themes)
     title = r.choice(theme["titles"])
     body = r.choice(theme["bodies"])
     return title, body

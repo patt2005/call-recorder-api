@@ -89,12 +89,12 @@ def run_no_revenue_notifications(app_context) -> NotificationRunStats:
     rng = random.Random()
 
     users = (
-        db.session.query(User.id, User.fcm_token)
+        db.session.query(User.id, User.fcm_token, User.language)
         .filter(User.fcm_token.isnot(None), User.fcm_token != "")
         .all()
     )
 
-    for user_id, fcm_token in users:
+    for user_id, fcm_token, language in users:
         stats.checked += 1
 
         app_user = _get_tweb_app_user(str(user_id))
@@ -102,7 +102,7 @@ def run_no_revenue_notifications(app_context) -> NotificationRunStats:
             continue
 
         stats.eligible += 1
-        title, body = pick_random_coherent(rng)
+        title, body = pick_random_coherent(rng, language=language)
 
         ok = push_notification_service.send_notification(fcm_token, title, body)
         if ok:
