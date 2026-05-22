@@ -365,19 +365,15 @@ def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
     us_number = "+19865294217"
-    uk_number = "+441514533006"
     ro_number = "+40373814965"
     hu_number = "+3612550208"
-    us_countries = {"US", "JP", "KR"}
 
-    if country_code in us_countries:
-        phone_number = us_number
-    elif country_code == "RO":
+    if country_code == "RO":
         phone_number = ro_number
     elif country_code == "HU":
         phone_number = hu_number
     else:
-        phone_number = uk_number
+        phone_number = us_number
 
     return jsonify({
         'phoneNumber': phone_number
