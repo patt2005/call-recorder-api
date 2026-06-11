@@ -29,8 +29,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 300,
 }
 
-notificationScheduler = NotificationScheduler(app)
-
 CORS(app, origins=[HOST])
 
 db.init_app(app)
