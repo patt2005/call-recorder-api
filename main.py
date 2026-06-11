@@ -2,30 +2,26 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
-from twilio.twiml.voice_response import VoiceResponse, Dial
-from twilio.rest import Client
 import json
 import os
 import threading
 from datetime import datetime
 import requests
 from sqlalchemy.orm import joinedload
-from requests.auth import HTTPBasicAuth
 from database.database import db
 from models.call import Call
 from models.call_transcript import CallTranscript
 from models.user import User
 from services.push_notification_service import push_notification_service
 from services.transcript_service import TranscriptService
+from services.file_service import upload_recording, get_recording_url
 from services.notification_scheduler import NotificationScheduler
 from services.notification_copy_data import pick_random_coherent
 
 HOST = os.environ.get('HOST', 'https://call-recorder-api-production-bc8d.up.railway.app')
 CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN) else None
+TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
@@ -34,22 +30,28 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 300,
 }
 
-notificationScheduler = NotificationScheduler(app)
-
 CORS(app, origins=[HOST])
 
 db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
 
-def process_transcript_background(call_uuid):
-    """Background: transcribe recording with Whisper and save to CallTranscript."""
+def process_transcript_background(call_uuid, download_url=None):
+    """Background: transcribe recording with Whisper and save to CallTranscript.
+
+    download_url: direct URL to fetch audio from (e.g. pre-signed S3).
+                  Falls back to call.recording_url if not provided.
+    """
     with app.app_context():
         try:
             print(f"Starting Whisper transcription for call UUID: {call_uuid}")
             call = db.session.query(Call).filter_by(id=call_uuid).first()
-            if not call or not call.recording_url:
-                print(f"Call not found or no recording URL for UUID: {call_uuid}")
+            if not call:
+                print(f"Call not found for UUID: {call_uuid}")
+                return
+            audio_url = download_url or call.recording_url
+            if not audio_url:
+                print(f"No recording URL for UUID: {call_uuid}")
                 return
             transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
             if not transcript:
@@ -60,7 +62,7 @@ def process_transcript_background(call_uuid):
             db.session.commit()
 
             transcript_service = TranscriptService(api_key=os.environ.get("OPENAI_API_KEY"))
-            result = transcript_service.get_transcript(call.recording_url)
+            result = transcript_service.get_transcript(audio_url)
 
             transcript.text = result.get("text") or ""
             transcript.segments = json.dumps(result["segments"]) if result.get("segments") else None
@@ -364,53 +366,20 @@ def send_test_notification():
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
-    kr_number = "00308640190"
-
-    if country_code == "RO":
-        phone_number = ro_number
-    elif country_code == "HU":
-        phone_number = hu_number
-    elif country_code == "KR":
-        phone_number = kr_number
-    else:
-        phone_number = us_number
+    us_number = "+16063938208"
 
     return jsonify({
-        'phoneNumber': phone_number
+        'phoneNumber': us_number
     }), 200
 
 @app.route('/recording/<recording_id>', methods=['GET'])
 def get_recording(recording_id):
-    """Proxy endpoint to serve Twilio recordings with authentication."""
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
-        return jsonify({'error': 'Twilio credentials not configured'}), 500
-
-    recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{recording_id}.mp3"
-    
-    try:
-        response = requests.get(
-            recording_url,
-            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            stream=True
-        )
-        
-        if response.status_code == 200:
-            return Response(
-                response.content,
-                mimetype='audio/mpeg',
-                headers={
-                    'Content-Disposition': f'inline; filename="recording_{recording_id}.mp3"',
-                    'Content-Length': str(len(response.content)),
-                    'Cache-Control': 'public, max-age=3600'  # Cache for 1 hour
-                }
-            )
-        else:
-            return jsonify({
-                'error': f'Failed to fetch recording: {response.status_code}'
-            }), response.status_code
-            
-    except Exception as e:
-        return jsonify({'error': f'Error fetching recording: {str(e)}'}), 500
+    """Redirect to a fresh presigned S3 URL for the recording."""
+    from flask import redirect as flask_redirect
+    url = get_recording_url(recording_id)
+    if not url:
+        return jsonify({'error': 'Recording not found'}), 404
+    return flask_redirect(url, code=302)
 
 @app.route('/delete_all_recordings', methods=['POST'])
 def delete_all_recordings():
@@ -461,84 +430,143 @@ def transcribe_recording():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/transcribe-complete', methods=['POST'])
-def transcribe_complete():
-    call_uuid = request.args.get('call-uuid')
-    try:
-        if not call_uuid:
-            return jsonify({'error': 'call-uuid parameter is required'}), 400
 
-        body = get_formated_body()
+def telnyx_call_control(call_control_id, action, payload=None):
+    """Issue a Telnyx Call Control API command."""
+    url = f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/{action}"
+    response = requests.post(
+        url,
+        json=payload or {},
+        headers={
+            "Authorization": f"Bearer {TELNYX_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    print(f"Telnyx Call Control {action}: {response.status_code} {response.text}")
+    return response
 
-        transcribe_text = body.get("TranscriptionText")
-        transcribe_status = body.get("TranscriptionStatus")
 
-        call = db.session.query(Call).filter_by(id=call_uuid).first()
-
-        if not call:
-            return jsonify({'error': 'Call not found'}), 404
-
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-        if not transcript:
-            transcript = CallTranscript(call_id=call_uuid, status=transcribe_status or 'pending')
-            db.session.add(transcript)
-        transcript.text = transcribe_text or ''
-        transcript.status = transcribe_status or 'pending'
-        transcript.updated_at = datetime.utcnow()
-
-        db.session.commit()
-
-        return jsonify("Transcribe was successfully saved."), 200
-    except Exception as e:
-        print(f"Error saving transcript for call UUID {call_uuid}: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/record-complete', methods=['POST'])
-def record_complete():
-    print(f"=== RECORD-COMPLETE ENDPOINT ===")
-    print(f"Request body: {request.get_data(as_text=True)}")
-    print(f"Request form: {request.form.to_dict()}")
-    print(f"Request JSON: {request.get_json() if request.is_json else 'Not JSON'}")
-    print(f"Request args: {request.args.to_dict()}")
-    print(f"Request headers: {dict(request.headers)}")
-    print(f"=== END REQUEST INFO ===")
-    
-    call_uuid = request.args.get('call-uuid')
-    
-    if not call_uuid:
-        return jsonify({'error': 'call-uuid parameter is required'}), 400
-
+@app.route("/answer", methods=["GET", "POST"])
+def answer():
+    """Handle incoming Telnyx Call Control webhook and start recording."""
     body = get_formated_body()
-    
-    recording_status = body.get('RecordingStatus')
-    if recording_status != 'completed':
-        print(f"Ignoring recording status: {recording_status}")
-        return jsonify("Recording status not completed, ignoring."), 200
-    
-    recording_url = body.get('RecordingUrl')
-    recording_sid = body.get('RecordingSid')
-    recording_length = body.get('RecordingDuration')
-    
-    call = db.session.query(Call).filter_by(id=call_uuid).first()
-    if not call:
-        return jsonify({'error': 'Call not found'}), 404
 
+    if not body:
+        print("Answer webhook: missing body")
+        return jsonify({}), 200
+
+    data = body.get('data', {}) if isinstance(body.get('data'), dict) else {}
+    event_type = data.get('event_type', '')
+    payload = data.get('payload', {}) if isinstance(data.get('payload'), dict) else {}
+
+    print(f"Answer webhook: event_type={event_type}")
+
+    if event_type == 'call.initiated':
+        return _handle_call_initiated(payload)
+
+    if event_type == 'call.recording.saved':
+        return _handle_recording_saved(payload)
+
+    # All other events (call.answered, call.hangup, etc.) — acknowledge silently
+    return jsonify({}), 200
+
+
+def _handle_call_initiated(payload):
+    user_phone = payload.get('from')
+    call_control_id = payload.get('call_control_id')
+
+    print(f"call.initiated: user_phone={user_phone}, call_control_id={call_control_id}")
+
+    if not user_phone or not call_control_id:
+        print("call.initiated: missing from or call_control_id")
+        return jsonify({}), 200
+
+    existing_call = db.session.query(Call).filter_by(id=call_control_id).first()
+    if existing_call:
+        print(f"Duplicate call.initiated, ignoring: {call_control_id}")
+        return jsonify({}), 200
+
+    user = db.session.query(User).filter_by(phone_number=user_phone).first()
+    call = Call(call_control_id, user_phone, datetime.now(), user_id=user.id if user else None)
+    db.session.add(call)
+    db.session.commit()
+    print(f"Created new call record: {call_control_id}")
+
+    answer_resp = telnyx_call_control(call_control_id, "answer")
+    if answer_resp.status_code not in (200, 201):
+        print(f"Failed to answer call: {answer_resp.status_code}")
+        return jsonify({}), 200
+
+    telnyx_call_control(call_control_id, "record_start", {
+        "format": "mp3",
+        "channels": "single",
+        "play_beep": False,
+    })
+
+    return jsonify({}), 200
+
+
+def _handle_recording_saved(payload):
+    call_control_id = payload.get('call_control_id')
+    recording_id = payload.get('recording_id')
+    recording_urls = payload.get('recording_urls', {})
+    recording_url = recording_urls.get('mp3')
+    started_at = payload.get('recording_started_at')
+    ended_at = payload.get('recording_ended_at')
+
+    print(f"call.recording.saved: call_control_id={call_control_id}, recording_id={recording_id}")
+
+    if not call_control_id:
+        print("call.recording.saved: missing call_control_id")
+        return jsonify({}), 200
+
+    call = db.session.query(Call).filter_by(id=call_control_id).first()
+    if not call:
+        print(f"call.recording.saved: call not found for {call_control_id}")
+        return jsonify({}), 200
+
+    if call.recording_status == 'completed' and call.recording_url:
+        print(f"Recording already processed for call: {call_control_id}")
+        return jsonify({}), 200
+
+    # Calculate duration from timestamps if available
+    duration = None
+    if started_at and ended_at:
+        try:
+            from datetime import timezone
+            start = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(ended_at.replace('Z', '+00:00'))
+            duration = int((end - start).total_seconds())
+        except Exception as e:
+            print(f"Could not calculate duration: {e}")
+
+    # Upload to S3 for permanent storage, then store our stable proxy URL in the DB
+    if recording_id and recording_url:
+        s3_url = upload_recording(recording_id, recording_url)
+        if s3_url:
+            print(f"Recording {recording_id} uploaded to S3")
+        else:
+            print(f"S3 upload failed or not configured for recording {recording_id}")
+
+    # Always store the proxy URL — it generates a fresh presigned URL on each request
+    final_url = f"https://call-recorder-api-production-0467.up.railway.app/recording/{recording_id}" if recording_id else recording_url
+    call.recording_url = final_url
+    call.recording_duration = duration
+    call.recording_status = 'completed'
+
+    # Resolve user for push notification
     user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
     if user is None and call.from_phone:
-        user = (
-            db.session.query(User)
-            .filter_by(phone_number=call.from_phone)
-            .order_by(User.created_at.asc())
-            .first()
-        )
+        user = db.session.query(User).filter_by(phone_number=call.from_phone).order_by(User.created_at.asc()).first()
         if user:
             call.user_id = user.id
-            db.session.commit()
+
+    if not db.session.query(CallTranscript).filter_by(call_id=call_control_id).first():
+        db.session.add(CallTranscript(call_id=call_control_id, status='processing'))
+    db.session.commit()
 
     if user and user.push_notifications_enabled and user.fcm_token:
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-        transcription_status = transcript.status if transcript else 'pending'
-        transcription_text = transcript.text if transcript else ''
+        transcript = db.session.query(CallTranscript).filter_by(call_id=call_control_id).first()
         call_data = {
             'id': call.id,
             'callDate': call.call_date.isoformat() if call.call_date else '',
@@ -549,102 +577,23 @@ def record_complete():
             'recordingUrl': call.recording_url or '',
             'summary': call.summary or '',
             'title': call.title or '',
-            'transcriptionStatus': transcription_status,
-            'transcriptionText': transcription_text
+            'transcriptionStatus': transcript.status if transcript else 'pending',
+            'transcriptionText': transcript.text if transcript else '',
         }
+        success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
+        print(f"Push notification {'sent' if success else 'failed'} for call {call_control_id}")
 
-        success = push_notification_service.send_recording_complete_notification(
-            user.fcm_token,
-            call_data
-        )
-
-        if success:
-            print(f"Recording complete notification sent to user {user.id} for call {call.id}")
-        else:
-            print(f"Failed to send recording complete notification to user {user.id}")
-    
-    if call.recording_status == 'completed' and call.recording_url:
-        print(f"Recording already processed for call UUID: {call_uuid}")
-        return jsonify("Recording already processed."), 200
-
-    if recording_sid:
-        recording_url = f"{HOST}/recording/{recording_sid}"
-        print(f"Using proxy recording URL: {recording_url}")
-    elif recording_url:
-        if 'Recordings/' in recording_url:
-            parts = recording_url.split('Recordings/')
-            if len(parts) > 1:
-                recording_id = parts[-1].split('.')[0]  # Remove .mp3 if present
-                recording_url = f"{HOST}/recording/{recording_id}"
-                print(f"Extracted recording ID {recording_id}, using proxy URL: {recording_url}")
-        else:
-            print(f"Could not extract recording ID from URL: {recording_url}")
-    else:
-        print("Warning: No RecordingUrl or RecordingSid provided in webhook")
-    
-    call.recording_url = recording_url
-    call.recording_duration = int(recording_length) if recording_length else None
-    call.recording_status = 'completed'
-
-    if not db.session.query(CallTranscript).filter_by(call_id=call_uuid).first():
-        db.session.add(CallTranscript(call_id=call_uuid, status='processing'))
-    db.session.commit()
-
+    # Use the raw Telnyx pre-signed URL for Whisper — it can download it directly without auth
+    transcribe_url = recording_url
     background_thread = threading.Thread(
         target=process_transcript_background,
-        args=(call_uuid,)
+        args=(call_control_id, transcribe_url)
     )
     background_thread.daemon = True
     background_thread.start()
-    print(f"Started Whisper transcription for call UUID: {call_uuid}")
+    print(f"Started Whisper transcription for call: {call_control_id}")
 
-    return jsonify("Recording successfully completed."), 200
-
-@app.route("/answer", methods=["GET", "POST"])
-def answer():
-    """Handle incoming call and record (e.g. for merge-call recording). Returns TwiML."""
-    body = get_formated_body()
-    response = VoiceResponse()
-
-    if not body:
-        print("Answer webhook: missing body")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-
-    user_phone = body.get('From')
-    call_sid = body.get('CallSid')
-
-    if not user_phone:
-        print("Answer webhook: missing From")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-
-    call_uuid = call_sid
-    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
-    user = db.session.query(User).filter_by(phone_number=user_phone).first()
-
-    if not existing_call:
-        call = Call(call_uuid, user_phone, datetime.now(), user_id=user.id if user else None)
-        db.session.add(call)
-        db.session.commit()
-        print(f"Created new call record with CallSid: {call_sid}")
-    else:
-        print(f"Get another postback from TWILIO: {body}")
-        return Response(str(response), mimetype='text/xml')
-
-    # No <Say> here: TTS before <Record> is heard on the line and is included in the MP3.
-    response.record(
-        play_beep=False,
-        max_length=5400,
-        transcribe=False,
-        recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
-        recording_status_callback_event="completed",
-        timeout=50,
-    )
-
-    return Response(str(response), mimetype='text/xml')
+    return jsonify({}), 200
 
 if __name__ == "__main__":
     with app.app_context():
