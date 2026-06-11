@@ -2,15 +2,12 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
-from twilio.twiml.voice_response import VoiceResponse, Dial
-from twilio.rest import Client
 import json
 import os
 import threading
 from datetime import datetime
 import requests
 from sqlalchemy.orm import joinedload
-from requests.auth import HTTPBasicAuth
 from database.database import db
 from models.call import Call
 from models.call_transcript import CallTranscript
@@ -23,9 +20,7 @@ from services.notification_copy_data import pick_random_coherent
 HOST = os.environ.get('HOST', 'https://call-recorder-api-production-bc8d.up.railway.app')
 CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN) else None
+TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
@@ -364,36 +359,27 @@ def send_test_notification():
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
-    kr_number = "00308640190"
-
-    if country_code == "RO":
-        phone_number = ro_number
-    elif country_code == "HU":
-        phone_number = hu_number
-    elif country_code == "KR":
-        phone_number = kr_number
-    else:
-        phone_number = us_number
+    us_number = "+16063938208"
 
     return jsonify({
-        'phoneNumber': phone_number
+        'phoneNumber': us_number
     }), 200
 
 @app.route('/recording/<recording_id>', methods=['GET'])
 def get_recording(recording_id):
-    """Proxy endpoint to serve Twilio recordings with authentication."""
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
-        return jsonify({'error': 'Twilio credentials not configured'}), 500
+    """Proxy endpoint to serve Telnyx recordings with API key authentication."""
+    if not TELNYX_API_KEY:
+        return jsonify({'error': 'Telnyx credentials not configured'}), 500
 
-    recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Recordings/{recording_id}.mp3"
-    
+    recording_url = f"https://api.telnyx.com/v2/recordings/{recording_id}/download"
+
     try:
         response = requests.get(
             recording_url,
-            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            headers={"Authorization": f"Bearer {TELNYX_API_KEY}"},
             stream=True
         )
-        
+
         if response.status_code == 200:
             return Response(
                 response.content,
@@ -401,14 +387,12 @@ def get_recording(recording_id):
                 headers={
                     'Content-Disposition': f'inline; filename="recording_{recording_id}.mp3"',
                     'Content-Length': str(len(response.content)),
-                    'Cache-Control': 'public, max-age=3600'  # Cache for 1 hour
+                    'Cache-Control': 'public, max-age=3600'
                 }
             )
         else:
-            return jsonify({
-                'error': f'Failed to fetch recording: {response.status_code}'
-            }), response.status_code
-            
+            return jsonify({'error': f'Failed to fetch recording: {response.status_code}'}), response.status_code
+
     except Exception as e:
         return jsonify({'error': f'Error fetching recording: {str(e)}'}), 500
 
@@ -602,24 +586,22 @@ def record_complete():
 
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
-    """Handle incoming call and record (e.g. for merge-call recording). Returns TwiML."""
+    """Handle incoming call and record. Returns TeXML."""
     body = get_formated_body()
-    response = VoiceResponse()
+
+    error_xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response><Say>Sorry, we could not process this call.</Say><Hangup/></Response>'''
 
     if not body:
         print("Answer webhook: missing body")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
+        return Response(error_xml, mimetype='text/xml')
 
     user_phone = body.get('From')
     call_sid = body.get('CallSid')
 
     if not user_phone:
         print("Answer webhook: missing From")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
+        return Response(error_xml, mimetype='text/xml')
 
     call_uuid = call_sid
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
@@ -631,20 +613,20 @@ def answer():
         db.session.commit()
         print(f"Created new call record with CallSid: {call_sid}")
     else:
-        print(f"Get another postback from TWILIO: {body}")
-        return Response(str(response), mimetype='text/xml')
+        print(f"Duplicate postback, ignoring: {body}")
+        return Response('''<?xml version="1.0" encoding="UTF-8"?><Response/>''', mimetype='text/xml')
 
-    # No <Say> here: TTS before <Record> is heard on the line and is included in the MP3.
-    response.record(
-        play_beep=False,
-        max_length=5400,
-        transcribe=False,
-        recording_status_callback=f"{HOST}/record-complete?call-uuid={call_uuid}",
-        recording_status_callback_event="completed",
-        timeout=50,
-    )
+    callback_url = f"{HOST}/record-complete?call-uuid={call_uuid}"
 
-    return Response(str(response), mimetype='text/xml')
+    texml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Record maxLength="5400" playBeep="false"
+     recordingStatusCallback="{callback_url}"
+     recordingStatusCallbackEvent="completed"
+     timeout="50"/>
+</Response>'''
+
+    return Response(texml, mimetype='text/xml')
 
 if __name__ == "__main__":
     with app.app_context():
