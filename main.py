@@ -35,14 +35,22 @@ db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
 
-def process_transcript_background(call_uuid):
-    """Background: transcribe recording with Whisper and save to CallTranscript."""
+def process_transcript_background(call_uuid, download_url=None):
+    """Background: transcribe recording with Whisper and save to CallTranscript.
+
+    download_url: direct URL to fetch audio from (e.g. pre-signed S3).
+                  Falls back to call.recording_url if not provided.
+    """
     with app.app_context():
         try:
             print(f"Starting Whisper transcription for call UUID: {call_uuid}")
             call = db.session.query(Call).filter_by(id=call_uuid).first()
-            if not call or not call.recording_url:
-                print(f"Call not found or no recording URL for UUID: {call_uuid}")
+            if not call:
+                print(f"Call not found for UUID: {call_uuid}")
+                return
+            audio_url = download_url or call.recording_url
+            if not audio_url:
+                print(f"No recording URL for UUID: {call_uuid}")
                 return
             transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
             if not transcript:
@@ -53,7 +61,7 @@ def process_transcript_background(call_uuid):
             db.session.commit()
 
             transcript_service = TranscriptService(api_key=os.environ.get("OPENAI_API_KEY"))
-            result = transcript_service.get_transcript(call.recording_url)
+            result = transcript_service.get_transcript(audio_url)
 
             transcript.text = result.get("text") or ""
             transcript.segments = json.dumps(result["segments"]) if result.get("segments") else None
@@ -588,7 +596,11 @@ def _handle_recording_saved(payload):
         success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
         print(f"Push notification {'sent' if success else 'failed'} for call {call_control_id}")
 
-    background_thread = threading.Thread(target=process_transcript_background, args=(call_control_id,))
+    # Pass the direct S3 URL for Whisper to download — the proxy URL requires auth
+    background_thread = threading.Thread(
+        target=process_transcript_background,
+        args=(call_control_id, recording_url)
+    )
     background_thread.daemon = True
     background_thread.start()
     print(f"Started Whisper transcription for call: {call_control_id}")
