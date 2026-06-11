@@ -443,144 +443,6 @@ def transcribe_recording():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/transcribe-complete', methods=['POST'])
-def transcribe_complete():
-    call_uuid = request.args.get('call-uuid')
-    try:
-        if not call_uuid:
-            return jsonify({'error': 'call-uuid parameter is required'}), 400
-
-        body = get_formated_body()
-
-        transcribe_text = body.get("TranscriptionText")
-        transcribe_status = body.get("TranscriptionStatus")
-
-        call = db.session.query(Call).filter_by(id=call_uuid).first()
-
-        if not call:
-            return jsonify({'error': 'Call not found'}), 404
-
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-        if not transcript:
-            transcript = CallTranscript(call_id=call_uuid, status=transcribe_status or 'pending')
-            db.session.add(transcript)
-        transcript.text = transcribe_text or ''
-        transcript.status = transcribe_status or 'pending'
-        transcript.updated_at = datetime.utcnow()
-
-        db.session.commit()
-
-        return jsonify("Transcribe was successfully saved."), 200
-    except Exception as e:
-        print(f"Error saving transcript for call UUID {call_uuid}: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/record-complete', methods=['POST'])
-def record_complete():
-    print(f"=== RECORD-COMPLETE ENDPOINT ===")
-    print(f"Request body: {request.get_data(as_text=True)}")
-    print(f"Request form: {request.form.to_dict()}")
-    print(f"Request JSON: {request.get_json() if request.is_json else 'Not JSON'}")
-    print(f"Request args: {request.args.to_dict()}")
-    print(f"Request headers: {dict(request.headers)}")
-    print(f"=== END REQUEST INFO ===")
-    
-    call_uuid = request.args.get('call-uuid')
-    
-    if not call_uuid:
-        return jsonify({'error': 'call-uuid parameter is required'}), 400
-
-    body = get_formated_body()
-    
-    recording_status = body.get('RecordingStatus')
-    if recording_status != 'completed':
-        print(f"Ignoring recording status: {recording_status}")
-        return jsonify("Recording status not completed, ignoring."), 200
-    
-    recording_url = body.get('RecordingUrl')
-    recording_sid = body.get('RecordingSid')
-    recording_length = body.get('RecordingDuration')
-    
-    call = db.session.query(Call).filter_by(id=call_uuid).first()
-    if not call:
-        return jsonify({'error': 'Call not found'}), 404
-
-    user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
-    if user is None and call.from_phone:
-        user = (
-            db.session.query(User)
-            .filter_by(phone_number=call.from_phone)
-            .order_by(User.created_at.asc())
-            .first()
-        )
-        if user:
-            call.user_id = user.id
-            db.session.commit()
-
-    if user and user.push_notifications_enabled and user.fcm_token:
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-        transcription_status = transcript.status if transcript else 'pending'
-        transcription_text = transcript.text if transcript else ''
-        call_data = {
-            'id': call.id,
-            'callDate': call.call_date.isoformat() if call.call_date else '',
-            'fromPhone': call.from_phone or '',
-            'toPhone': '',
-            'recordingDuration': call.recording_duration or 0,
-            'recordingStatus': call.recording_status or '',
-            'recordingUrl': call.recording_url or '',
-            'summary': call.summary or '',
-            'title': call.title or '',
-            'transcriptionStatus': transcription_status,
-            'transcriptionText': transcription_text
-        }
-
-        success = push_notification_service.send_recording_complete_notification(
-            user.fcm_token,
-            call_data
-        )
-
-        if success:
-            print(f"Recording complete notification sent to user {user.id} for call {call.id}")
-        else:
-            print(f"Failed to send recording complete notification to user {user.id}")
-    
-    if call.recording_status == 'completed' and call.recording_url:
-        print(f"Recording already processed for call UUID: {call_uuid}")
-        return jsonify("Recording already processed."), 200
-
-    if recording_sid:
-        recording_url = f"{HOST}/recording/{recording_sid}"
-        print(f"Using proxy recording URL: {recording_url}")
-    elif recording_url:
-        if 'Recordings/' in recording_url:
-            parts = recording_url.split('Recordings/')
-            if len(parts) > 1:
-                recording_id = parts[-1].split('.')[0]  # Remove .mp3 if present
-                recording_url = f"{HOST}/recording/{recording_id}"
-                print(f"Extracted recording ID {recording_id}, using proxy URL: {recording_url}")
-        else:
-            print(f"Could not extract recording ID from URL: {recording_url}")
-    else:
-        print("Warning: No RecordingUrl or RecordingSid provided in webhook")
-    
-    call.recording_url = recording_url
-    call.recording_duration = int(recording_length) if recording_length else None
-    call.recording_status = 'completed'
-
-    if not db.session.query(CallTranscript).filter_by(call_id=call_uuid).first():
-        db.session.add(CallTranscript(call_id=call_uuid, status='processing'))
-    db.session.commit()
-
-    background_thread = threading.Thread(
-        target=process_transcript_background,
-        args=(call_uuid,)
-    )
-    background_thread.daemon = True
-    background_thread.start()
-    print(f"Started Whisper transcription for call UUID: {call_uuid}")
-
-    return jsonify("Recording successfully completed."), 200
 
 def telnyx_call_control(call_control_id, action, payload=None):
     """Issue a Telnyx Call Control API command."""
@@ -610,47 +472,126 @@ def answer():
     event_type = data.get('event_type', '')
     payload = data.get('payload', {}) if isinstance(data.get('payload'), dict) else {}
 
-    # Only act on call.initiated — acknowledge everything else silently
-    if event_type != 'call.initiated':
-        print(f"Answer webhook: ignoring event_type={event_type}")
-        return jsonify({}), 200
+    print(f"Answer webhook: event_type={event_type}")
 
-    user_phone = payload.get('from') or body.get('From') or body.get('from')
-    call_control_id = payload.get('call_control_id') or body.get('CallSid') or body.get('call_control_id')
+    if event_type == 'call.initiated':
+        return _handle_call_initiated(payload)
 
-    print(f"Answer webhook: event_type={event_type}, user_phone={user_phone}, call_control_id={call_control_id}")
+    if event_type == 'call.recording.saved':
+        return _handle_recording_saved(payload)
+
+    # All other events (call.answered, call.hangup, etc.) — acknowledge silently
+    return jsonify({}), 200
+
+
+def _handle_call_initiated(payload):
+    user_phone = payload.get('from')
+    call_control_id = payload.get('call_control_id')
+
+    print(f"call.initiated: user_phone={user_phone}, call_control_id={call_control_id}")
 
     if not user_phone or not call_control_id:
-        print("Answer webhook: missing from or call_control_id")
+        print("call.initiated: missing from or call_control_id")
         return jsonify({}), 200
 
-    # Save call record before answering
     existing_call = db.session.query(Call).filter_by(id=call_control_id).first()
-    user = db.session.query(User).filter_by(phone_number=user_phone).first()
-
     if existing_call:
         print(f"Duplicate call.initiated, ignoring: {call_control_id}")
         return jsonify({}), 200
 
+    user = db.session.query(User).filter_by(phone_number=user_phone).first()
     call = Call(call_control_id, user_phone, datetime.now(), user_id=user.id if user else None)
     db.session.add(call)
     db.session.commit()
     print(f"Created new call record: {call_control_id}")
 
-    # Step 1: Answer the call
     answer_resp = telnyx_call_control(call_control_id, "answer")
     if answer_resp.status_code not in (200, 201):
         print(f"Failed to answer call: {answer_resp.status_code}")
         return jsonify({}), 200
 
-    # Step 2: Start recording
-    callback_url = f"{HOST}/record-complete?call-uuid={call_control_id}"
     telnyx_call_control(call_control_id, "record_start", {
         "format": "mp3",
         "channels": "single",
         "play_beep": False,
-        "status_callback_url": callback_url,
     })
+
+    return jsonify({}), 200
+
+
+def _handle_recording_saved(payload):
+    call_control_id = payload.get('call_control_id')
+    recording_id = payload.get('recording_id')
+    recording_urls = payload.get('recording_urls', {})
+    recording_url = recording_urls.get('mp3')
+    started_at = payload.get('recording_started_at')
+    ended_at = payload.get('recording_ended_at')
+
+    print(f"call.recording.saved: call_control_id={call_control_id}, recording_id={recording_id}")
+
+    if not call_control_id:
+        print("call.recording.saved: missing call_control_id")
+        return jsonify({}), 200
+
+    call = db.session.query(Call).filter_by(id=call_control_id).first()
+    if not call:
+        print(f"call.recording.saved: call not found for {call_control_id}")
+        return jsonify({}), 200
+
+    if call.recording_status == 'completed' and call.recording_url:
+        print(f"Recording already processed for call: {call_control_id}")
+        return jsonify({}), 200
+
+    # Calculate duration from timestamps if available
+    duration = None
+    if started_at and ended_at:
+        try:
+            from datetime import timezone
+            start = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(ended_at.replace('Z', '+00:00'))
+            duration = int((end - start).total_seconds())
+        except Exception as e:
+            print(f"Could not calculate duration: {e}")
+
+    # Use our proxy URL so the recording is served via our authenticated endpoint
+    proxy_url = f"{HOST}/recording/{recording_id}" if recording_id else recording_url
+    call.recording_url = proxy_url
+    call.recording_duration = duration
+    call.recording_status = 'completed'
+
+    # Resolve user for push notification
+    user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
+    if user is None and call.from_phone:
+        user = db.session.query(User).filter_by(phone_number=call.from_phone).order_by(User.created_at.asc()).first()
+        if user:
+            call.user_id = user.id
+
+    if not db.session.query(CallTranscript).filter_by(call_id=call_control_id).first():
+        db.session.add(CallTranscript(call_id=call_control_id, status='processing'))
+    db.session.commit()
+
+    if user and user.push_notifications_enabled and user.fcm_token:
+        transcript = db.session.query(CallTranscript).filter_by(call_id=call_control_id).first()
+        call_data = {
+            'id': call.id,
+            'callDate': call.call_date.isoformat() if call.call_date else '',
+            'fromPhone': call.from_phone or '',
+            'toPhone': '',
+            'recordingDuration': call.recording_duration or 0,
+            'recordingStatus': call.recording_status or '',
+            'recordingUrl': call.recording_url or '',
+            'summary': call.summary or '',
+            'title': call.title or '',
+            'transcriptionStatus': transcript.status if transcript else 'pending',
+            'transcriptionText': transcript.text if transcript else '',
+        }
+        success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
+        print(f"Push notification {'sent' if success else 'failed'} for call {call_control_id}")
+
+    background_thread = threading.Thread(target=process_transcript_background, args=(call_control_id,))
+    background_thread.daemon = True
+    background_thread.start()
+    print(f"Started Whisper transcription for call: {call_control_id}")
 
     return jsonify({}), 200
 
