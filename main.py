@@ -596,11 +596,16 @@ def answer():
         print("Answer webhook: missing body")
         return Response(error_xml, mimetype='text/xml')
 
-    user_phone = body.get('From')
-    call_sid = body.get('CallSid')
+    # Telnyx sends a nested JSON: data.payload.from / data.payload.call_control_id
+    # TeXML mode may send flat form fields instead — handle both
+    payload = body.get('data', {}).get('payload', {}) if isinstance(body.get('data'), dict) else {}
+    user_phone = payload.get('from') or body.get('From') or body.get('from')
+    call_sid = payload.get('call_control_id') or body.get('CallSid') or body.get('call_control_id')
+
+    print(f"Answer webhook: user_phone={user_phone}, call_sid={call_sid}")
 
     if not user_phone:
-        print("Answer webhook: missing From")
+        print("Answer webhook: missing From/from")
         return Response(error_xml, mimetype='text/xml')
 
     call_uuid = call_sid
