@@ -598,11 +598,19 @@ def answer():
 
     # Telnyx sends a nested JSON: data.payload.from / data.payload.call_control_id
     # TeXML mode may send flat form fields instead — handle both
-    payload = body.get('data', {}).get('payload', {}) if isinstance(body.get('data'), dict) else {}
+    data = body.get('data', {}) if isinstance(body.get('data'), dict) else {}
+    event_type = data.get('event_type', '')
+    payload = data.get('payload', {}) if isinstance(data.get('payload'), dict) else {}
+
+    # Only process call.initiated events — ignore call.answered, call.hangup, etc.
+    if event_type and event_type != 'call.initiated':
+        print(f"Answer webhook: ignoring event_type={event_type}")
+        return Response('''<?xml version="1.0" encoding="UTF-8"?><Response/>''', mimetype='text/xml')
+
     user_phone = payload.get('from') or body.get('From') or body.get('from')
     call_sid = payload.get('call_control_id') or body.get('CallSid') or body.get('call_control_id')
 
-    print(f"Answer webhook: user_phone={user_phone}, call_sid={call_sid}")
+    print(f"Answer webhook: event_type={event_type}, user_phone={user_phone}, call_sid={call_sid}")
 
     if not user_phone:
         print("Answer webhook: missing From/from")
