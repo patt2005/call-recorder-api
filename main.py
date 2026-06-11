@@ -14,6 +14,7 @@ from models.call_transcript import CallTranscript
 from models.user import User
 from services.push_notification_service import push_notification_service
 from services.transcript_service import TranscriptService
+from services.file_service import upload_recording, get_recording_url
 from services.notification_scheduler import NotificationScheduler
 from services.notification_copy_data import pick_random_coherent
 
@@ -373,34 +374,12 @@ def get_service_phone_number(country_code):
 
 @app.route('/recording/<recording_id>', methods=['GET'])
 def get_recording(recording_id):
-    """Proxy endpoint to serve Telnyx recordings with API key authentication."""
-    if not TELNYX_API_KEY:
-        return jsonify({'error': 'Telnyx credentials not configured'}), 500
-
-    recording_url = f"https://api.telnyx.com/v2/recordings/{recording_id}/download"
-
-    try:
-        response = requests.get(
-            recording_url,
-            headers={"Authorization": f"Bearer {TELNYX_API_KEY}"},
-            stream=True
-        )
-
-        if response.status_code == 200:
-            return Response(
-                response.content,
-                mimetype='audio/mpeg',
-                headers={
-                    'Content-Disposition': f'inline; filename="recording_{recording_id}.mp3"',
-                    'Content-Length': str(len(response.content)),
-                    'Cache-Control': 'public, max-age=3600'
-                }
-            )
-        else:
-            return jsonify({'error': f'Failed to fetch recording: {response.status_code}'}), response.status_code
-
-    except Exception as e:
-        return jsonify({'error': f'Error fetching recording: {str(e)}'}), 500
+    """Redirect to a fresh presigned S3 URL for the recording."""
+    from flask import redirect as flask_redirect
+    url = get_recording_url(recording_id)
+    if not url:
+        return jsonify({'error': 'Recording not found'}), 404
+    return flask_redirect(url, code=302)
 
 @app.route('/delete_all_recordings', methods=['POST'])
 def delete_all_recordings():
@@ -561,9 +540,17 @@ def _handle_recording_saved(payload):
         except Exception as e:
             print(f"Could not calculate duration: {e}")
 
-    # Use our proxy URL so the recording is served via our authenticated endpoint
-    proxy_url = f"{HOST}/recording/{recording_id}" if recording_id else recording_url
-    call.recording_url = proxy_url
+    # Upload to S3 for permanent storage, then store our stable proxy URL in the DB
+    if recording_id and recording_url:
+        s3_url = upload_recording(recording_id, recording_url)
+        if s3_url:
+            print(f"Recording {recording_id} uploaded to S3")
+        else:
+            print(f"S3 upload failed or not configured for recording {recording_id}")
+
+    # Always store the proxy URL — it generates a fresh presigned URL on each request
+    final_url = f"https://call-recorder-api-production-0467.up.railway.app/recording/{recording_id}" if recording_id else recording_url
+    call.recording_url = final_url
     call.recording_duration = duration
     call.recording_status = 'completed'
 
@@ -596,10 +583,11 @@ def _handle_recording_saved(payload):
         success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
         print(f"Push notification {'sent' if success else 'failed'} for call {call_control_id}")
 
-    # Pass the direct S3 URL for Whisper to download — the proxy URL requires auth
+    # Use the raw Telnyx pre-signed URL for Whisper — it can download it directly without auth
+    transcribe_url = recording_url
     background_thread = threading.Thread(
         target=process_transcript_background,
-        args=(call_control_id, recording_url)
+        args=(call_control_id, transcribe_url)
     )
     background_thread.daemon = True
     background_thread.start()
