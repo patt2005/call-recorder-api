@@ -20,8 +20,8 @@ from services.transcript_service import TranscriptService
 from services.notification_scheduler import NotificationScheduler
 from services.notification_copy_data import pick_random_coherent
 
-HOST = "https://call-recorder-api-production-bc8d.up.railway.app"
-CONNECTION_STRING = "postgresql://postgres:IHaqrKkfZMUkHIfsgotyNPJorsJzgMKP@shortline.proxy.rlwy.net:39111/railway"
+HOST = os.environ.get('HOST', 'https://call-recorder-api-production-bc8d.up.railway.app')
+CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
@@ -364,9 +364,6 @@ def send_test_notification():
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
-    us_number = "+19865294217"
-    ro_number = "+40373814965"
-    hu_number = "+3612550208"
     kr_number = "00308640190"
 
     if country_code == "RO":
