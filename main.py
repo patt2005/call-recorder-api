@@ -549,7 +549,7 @@ def _handle_recording_saved(payload):
             print(f"S3 upload failed or not configured for recording {recording_id}")
 
     # Always store the proxy URL — it generates a fresh presigned URL on each request
-    final_url = f"https://call-recorder-api-production-0467.up.railway.app/recording/{recording_id}" if recording_id else recording_url
+    final_url = f"{HOST}/recording/{recording_id}" if recording_id else recording_url
     call.recording_url = final_url
     call.recording_duration = duration
     call.recording_status = 'completed'
