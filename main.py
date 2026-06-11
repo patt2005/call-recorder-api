@@ -367,9 +367,15 @@ def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
     us_number = "+16063938208"
+    kr_number = "+82308640190"
+
+    if country_code == "KR":
+        phone_number = kr_number
+    else:
+        phone_number = us_number
 
     return jsonify({
-        'phoneNumber': us_number
+        'phoneNumber': phone_number
     }), 200
 
 @app.route('/recording/<recording_id>', methods=['GET'])
