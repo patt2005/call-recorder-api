@@ -584,62 +584,77 @@ def record_complete():
 
     return jsonify("Recording successfully completed."), 200
 
+def telnyx_call_control(call_control_id, action, payload=None):
+    """Issue a Telnyx Call Control API command."""
+    url = f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/{action}"
+    response = requests.post(
+        url,
+        json=payload or {},
+        headers={
+            "Authorization": f"Bearer {TELNYX_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    print(f"Telnyx Call Control {action}: {response.status_code} {response.text}")
+    return response
+
+
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
-    """Handle incoming call and record. Returns TeXML."""
+    """Handle incoming Telnyx Call Control webhook and start recording."""
     body = get_formated_body()
-
-    error_xml = '''<?xml version="1.0" encoding="UTF-8"?>
-<Response><Say>Sorry, we could not process this call.</Say><Hangup/></Response>'''
 
     if not body:
         print("Answer webhook: missing body")
-        return Response(error_xml, mimetype='text/xml')
+        return jsonify({}), 200
 
-    # Telnyx sends a nested JSON: data.payload.from / data.payload.call_control_id
-    # TeXML mode may send flat form fields instead — handle both
     data = body.get('data', {}) if isinstance(body.get('data'), dict) else {}
     event_type = data.get('event_type', '')
     payload = data.get('payload', {}) if isinstance(data.get('payload'), dict) else {}
 
-    # Only process call.initiated events — ignore call.answered, call.hangup, etc.
-    if event_type and event_type != 'call.initiated':
+    # Only act on call.initiated — acknowledge everything else silently
+    if event_type != 'call.initiated':
         print(f"Answer webhook: ignoring event_type={event_type}")
-        return Response('''<?xml version="1.0" encoding="UTF-8"?><Response/>''', mimetype='text/xml')
+        return jsonify({}), 200
 
     user_phone = payload.get('from') or body.get('From') or body.get('from')
-    call_sid = payload.get('call_control_id') or body.get('CallSid') or body.get('call_control_id')
+    call_control_id = payload.get('call_control_id') or body.get('CallSid') or body.get('call_control_id')
 
-    print(f"Answer webhook: event_type={event_type}, user_phone={user_phone}, call_sid={call_sid}")
+    print(f"Answer webhook: event_type={event_type}, user_phone={user_phone}, call_control_id={call_control_id}")
 
-    if not user_phone:
-        print("Answer webhook: missing From/from")
-        return Response(error_xml, mimetype='text/xml')
+    if not user_phone or not call_control_id:
+        print("Answer webhook: missing from or call_control_id")
+        return jsonify({}), 200
 
-    call_uuid = call_sid
-    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
+    # Save call record before answering
+    existing_call = db.session.query(Call).filter_by(id=call_control_id).first()
     user = db.session.query(User).filter_by(phone_number=user_phone).first()
 
-    if not existing_call:
-        call = Call(call_uuid, user_phone, datetime.now(), user_id=user.id if user else None)
-        db.session.add(call)
-        db.session.commit()
-        print(f"Created new call record with CallSid: {call_sid}")
-    else:
-        print(f"Duplicate postback, ignoring: {body}")
-        return Response('''<?xml version="1.0" encoding="UTF-8"?><Response/>''', mimetype='text/xml')
+    if existing_call:
+        print(f"Duplicate call.initiated, ignoring: {call_control_id}")
+        return jsonify({}), 200
 
-    callback_url = f"{HOST}/record-complete?call-uuid={call_uuid}"
+    call = Call(call_control_id, user_phone, datetime.now(), user_id=user.id if user else None)
+    db.session.add(call)
+    db.session.commit()
+    print(f"Created new call record: {call_control_id}")
 
-    texml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Record maxLength="5400" playBeep="false"
-     recordingStatusCallback="{callback_url}"
-     recordingStatusCallbackEvent="completed"
-     timeout="50"/>
-</Response>'''
+    # Step 1: Answer the call
+    answer_resp = telnyx_call_control(call_control_id, "answer")
+    if answer_resp.status_code not in (200, 201):
+        print(f"Failed to answer call: {answer_resp.status_code}")
+        return jsonify({}), 200
 
-    return Response(texml, mimetype='text/xml')
+    # Step 2: Start recording
+    callback_url = f"{HOST}/record-complete?call-uuid={call_control_id}"
+    telnyx_call_control(call_control_id, "record_start", {
+        "format": "mp3",
+        "channels": "single",
+        "play_beep": False,
+        "status_callback_url": callback_url,
+    })
+
+    return jsonify({}), 200
 
 if __name__ == "__main__":
     with app.app_context():
