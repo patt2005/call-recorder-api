@@ -85,9 +85,6 @@ def process_transcript_background(call_uuid, download_url=None):
                 print(f"Failed to update call with error fallback: {str(inner_e)}")
 
 def get_formated_body():
-    # Always include query string params (Telnyx TeXML sends GET with params in URL)
-    query_params = request.args.to_dict()
-
     if request.is_json:
         body = request.get_json()
         print(f"JSON body: {body}")
@@ -101,12 +98,7 @@ def get_formated_body():
         body = parse_qs(raw_data)
         body = {k: v[0] if len(v) == 1 else v for k, v in body.items()}
         print(f"Parsed body: {body}")
-
-    # Merge query params — they take lower priority than body fields
-    merged = {**query_params, **body}
-    if query_params:
-        print(f"Query params: {query_params}")
-    return merged
+    return body
 
 @app.route('/get_calls_for_user', methods=['POST'])
 def get_calls_for_user():
@@ -390,11 +382,9 @@ def get_service_phone_number(country_code):
 def get_recording(recording_id):
     """Redirect to a fresh presigned S3 URL for the recording."""
     from flask import redirect as flask_redirect
-    print(f"get_recording: fetching presigned URL for recording_id={recording_id}")
     url = get_recording_url(recording_id)
     if not url:
         return jsonify({'error': 'Recording not found'}), 404
-    print(f"get_recording: redirecting to {url}")
     return flask_redirect(url, code=302)
 
 @app.route('/delete_all_recordings', methods=['POST'])
@@ -447,88 +437,125 @@ def transcribe_recording():
         return jsonify({'error': str(e)}), 500
 
 
+def telnyx_call_control(call_control_id, action, payload=None):
+    """Issue a Telnyx Call Control API command."""
+    url = f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/{action}"
+    response = requests.post(
+        url,
+        json=payload or {},
+        headers={
+            "Authorization": f"Bearer {TELNYX_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    print(f"Telnyx Call Control {action}: {response.status_code} {response.text}")
+    return response
+
+
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
-    """Handle inbound call via TeXML Application. Telnyx POSTs form-encoded From/CallSid, we return XML to record."""
-    print(f"RAW /answer: method={request.method} content_type={request.content_type} args={dict(request.args)} form={dict(request.form)} data={request.get_data(as_text=True)[:300]}")
-
-    empty_xml = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-
-    # TeXML Application sends form-encoded POST: From, To, CallSid
-    user_phone = request.form.get('From') or request.args.get('From')
-    call_sid = request.form.get('CallSid') or request.args.get('CallSid')
-
-    print(f"Answer webhook: From={user_phone}, CallSid={call_sid}")
-
-    if not user_phone or not call_sid:
-        print("Answer webhook: missing From or CallSid — not a TeXML call fetch")
-        return Response(empty_xml, mimetype='text/xml')
-
-    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
-    user = db.session.query(User).filter_by(phone_number=user_phone).first()
-
-    if not existing_call:
-        call = Call(call_sid, user_phone, datetime.now(), user_id=user.id if user else None)
-        db.session.add(call)
-        db.session.commit()
-        print(f"Created new call record: {call_sid}")
-    else:
-        print(f"Duplicate /answer for {call_sid}, returning empty response")
-        return Response(empty_xml, mimetype='text/xml')
-
-    callback_url = f"{HOST}/record-complete?call-uuid={call_sid}"
-    texml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Record maxLength="5400" playBeep="false" recordingStatusCallback="{callback_url}" recordingStatusCallbackEvent="completed" timeout="50"/>
-</Response>'''
-
-    print(f"Returning TeXML for call {call_sid}")
-    return Response(texml, mimetype='text/xml')
-
-
-@app.route("/record-complete", methods=["GET", "POST"])
-def record_complete():
-    """Handle TeXML recording completion callback."""
+    """Handle incoming Telnyx Call Control webhook and start recording."""
     body = get_formated_body()
-    print(f"record-complete full payload: {body}")
 
-    call_sid = request.args.get('call-uuid') or body.get('CallSid')
-    recording_status = body.get('RecordingStatus')
-    recording_url = body.get('RecordingUrl')
-    recording_sid = body.get('RecordingSid')
-    recording_duration = body.get('RecordingDuration')
+    if not body:
+        print("Answer webhook: missing body")
+        return jsonify({}), 200
 
-    print(f"record-complete: call_sid={call_sid}, status={recording_status}, recording_sid={recording_sid}, url={recording_url}, duration={recording_duration}")
+    data = body.get('data', {}) if isinstance(body.get('data'), dict) else {}
+    event_type = data.get('event_type', '')
+    payload = data.get('payload', {}) if isinstance(data.get('payload'), dict) else {}
 
-    if recording_status != 'completed':
-        print(f"record-complete: status is '{recording_status}', ignoring")
-        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+    print(f"Answer webhook: event_type={event_type}")
 
-    if not call_sid:
-        print("record-complete: missing call_sid")
-        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+    if event_type == 'call.initiated':
+        return _handle_call_initiated(payload)
 
-    call = db.session.query(Call).filter_by(id=call_sid).first()
+    if event_type == 'call.recording.saved':
+        return _handle_recording_saved(payload)
+
+    # All other events (call.answered, call.hangup, etc.) — acknowledge silently
+    return jsonify({}), 200
+
+
+def _handle_call_initiated(payload):
+    user_phone = payload.get('from')
+    call_control_id = payload.get('call_control_id')
+
+    print(f"call.initiated: user_phone={user_phone}, call_control_id={call_control_id}")
+
+    if not user_phone or not call_control_id:
+        print("call.initiated: missing from or call_control_id")
+        return jsonify({}), 200
+
+    existing_call = db.session.query(Call).filter_by(id=call_control_id).first()
+    if existing_call:
+        print(f"Duplicate call.initiated, ignoring: {call_control_id}")
+        return jsonify({}), 200
+
+    user = db.session.query(User).filter_by(phone_number=user_phone).first()
+    call = Call(call_control_id, user_phone, datetime.now(), user_id=user.id if user else None)
+    db.session.add(call)
+    db.session.commit()
+    print(f"Created new call record: {call_control_id}")
+
+    answer_resp = telnyx_call_control(call_control_id, "answer")
+    if answer_resp.status_code not in (200, 201):
+        print(f"Failed to answer call: {answer_resp.status_code}")
+        return jsonify({}), 200
+
+    telnyx_call_control(call_control_id, "record_start", {
+        "format": "mp3",
+        "channels": "single",
+        "play_beep": True,
+    })
+
+    return jsonify({}), 200
+
+
+def _handle_recording_saved(payload):
+    call_control_id = payload.get('call_control_id')
+    recording_id = payload.get('recording_id')
+    recording_urls = payload.get('recording_urls', {})
+    recording_url = recording_urls.get('mp3')
+    started_at = payload.get('recording_started_at')
+    ended_at = payload.get('recording_ended_at')
+
+    print(f"call.recording.saved: call_control_id={call_control_id}, recording_id={recording_id}")
+
+    if not call_control_id:
+        print("call.recording.saved: missing call_control_id")
+        return jsonify({}), 200
+
+    call = db.session.query(Call).filter_by(id=call_control_id).first()
     if not call:
-        print(f"record-complete: call not found for {call_sid}")
-        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+        print(f"call.recording.saved: call not found for {call_control_id}")
+        return jsonify({}), 200
 
     if call.recording_status == 'completed' and call.recording_url:
-        print(f"Recording already processed for call: {call_sid}")
-        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+        print(f"Recording already processed for call: {call_control_id}")
+        return jsonify({}), 200
 
-    duration = int(recording_duration) if recording_duration else None
+    # Calculate duration from timestamps if available
+    duration = None
+    if started_at and ended_at:
+        try:
+            from datetime import timezone
+            start = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(ended_at.replace('Z', '+00:00'))
+            duration = int((end - start).total_seconds())
+        except Exception as e:
+            print(f"Could not calculate duration: {e}")
 
-    # Upload to S3 for permanent storage
-    if recording_sid and recording_url:
-        s3_url = upload_recording(recording_sid, recording_url)
+    # Upload to S3 for permanent storage, then store our stable proxy URL in the DB
+    if recording_id and recording_url:
+        s3_url = upload_recording(recording_id, recording_url)
         if s3_url:
-            print(f"Recording {recording_sid} uploaded to S3")
+            print(f"Recording {recording_id} uploaded to S3")
         else:
-            print(f"S3 upload failed or not configured for recording {recording_sid}")
+            print(f"S3 upload failed or not configured for recording {recording_id}")
 
-    # Store our stable proxy URL (generates fresh presigned S3 URL on each request)
-    final_url = f"{HOST}/recording/{recording_sid}" if recording_sid else recording_url
+    # Always store the proxy URL — it generates a fresh presigned URL on each request
+    final_url = f"{HOST}/recording/{recording_id}" if recording_id else recording_url
     call.recording_url = final_url
     call.recording_duration = duration
     call.recording_status = 'completed'
@@ -540,12 +567,12 @@ def record_complete():
         if user:
             call.user_id = user.id
 
-    if not db.session.query(CallTranscript).filter_by(call_id=call_sid).first():
-        db.session.add(CallTranscript(call_id=call_sid, status='processing'))
+    if not db.session.query(CallTranscript).filter_by(call_id=call_control_id).first():
+        db.session.add(CallTranscript(call_id=call_control_id, status='processing'))
     db.session.commit()
 
     if user and user.push_notifications_enabled and user.fcm_token:
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_sid).first()
+        transcript = db.session.query(CallTranscript).filter_by(call_id=call_control_id).first()
         call_data = {
             'id': call.id,
             'callDate': call.call_date.isoformat() if call.call_date else '',
@@ -560,18 +587,19 @@ def record_complete():
             'transcriptionText': transcript.text if transcript else '',
         }
         success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
-        print(f"Push notification {'sent' if success else 'failed'} for call {call_sid}")
+        print(f"Push notification {'sent' if success else 'failed'} for call {call_control_id}")
 
-    # Use the raw recording URL for Whisper transcription
+    # Use the raw Telnyx pre-signed URL for Whisper — it can download it directly without auth
+    transcribe_url = recording_url
     background_thread = threading.Thread(
         target=process_transcript_background,
-        args=(call_sid, recording_url)
+        args=(call_control_id, transcribe_url)
     )
     background_thread.daemon = True
     background_thread.start()
-    print(f"Started Whisper transcription for call: {call_sid}")
+    print(f"Started Whisper transcription for call: {call_control_id}")
 
-    return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+    return jsonify({}), 200
 
 if __name__ == "__main__":
     with app.app_context():
