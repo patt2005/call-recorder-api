@@ -447,22 +447,21 @@ def transcribe_recording():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route("/answer", methods=["GET", "POST"])
+@app.route("/answer", methods=["POST"])
 def answer():
-    """Handle inbound call via TeXML. Returns XML instructing Telnyx to record."""
-    body = get_formated_body()
+    """Handle inbound call via TeXML. Telnyx POSTs form-encoded From/CallSid, we return XML to record."""
+    print(f"RAW /answer POST: content_type={request.content_type} data={request.get_data(as_text=True)[:500]}")
 
-    hangup_xml = '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>'
+    user_phone = request.form.get('From')
+    call_sid = request.form.get('CallSid')
 
-    # TeXML sends form-encoded params: From, To, CallSid
-    user_phone = body.get('From')
-    call_sid = body.get('CallSid')
+    print(f"Answer webhook: From={user_phone}, CallSid={call_sid}")
 
-    print(f"Answer webhook (TeXML): From={user_phone}, CallSid={call_sid}, full body={body}")
+    empty_xml = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
-    if not body or not user_phone or not call_sid:
-        print("Answer webhook (TeXML): missing From or CallSid")
-        return Response(hangup_xml, mimetype='text/xml')
+    if not user_phone or not call_sid:
+        print("Answer webhook: missing From or CallSid — ignoring (likely a status event)")
+        return Response(empty_xml, mimetype='text/xml')
 
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
     user = db.session.query(User).filter_by(phone_number=user_phone).first()
@@ -471,10 +470,10 @@ def answer():
         call = Call(call_sid, user_phone, datetime.now(), user_id=user.id if user else None)
         db.session.add(call)
         db.session.commit()
-        print(f"Created new call record (TeXML): {call_sid}")
+        print(f"Created new call record: {call_sid}")
     else:
         print(f"Duplicate /answer for call {call_sid}, returning empty response")
-        return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype='text/xml')
+        return Response(empty_xml, mimetype='text/xml')
 
     callback_url = f"{HOST}/record-complete?call-uuid={call_sid}"
     texml = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -482,6 +481,7 @@ def answer():
     <Record maxLength="5400" playBeep="false" recordingStatusCallback="{callback_url}" recordingStatusCallbackEvent="completed" timeout="50"/>
 </Response>'''
 
+    print(f"Returning TeXML for call {call_sid}: {texml}")
     return Response(texml, mimetype='text/xml')
 
 
