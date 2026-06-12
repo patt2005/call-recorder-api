@@ -447,20 +447,29 @@ def transcribe_recording():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route("/answer", methods=["POST"])
+@app.route("/answer", methods=["GET", "POST"])
 def answer():
-    """Handle inbound call via TeXML. Telnyx POSTs form-encoded From/CallSid, we return XML to record."""
-    print(f"RAW /answer POST: content_type={request.content_type} data={request.get_data(as_text=True)[:500]}")
-
-    user_phone = request.form.get('From')
-    call_sid = request.form.get('CallSid')
-
-    print(f"Answer webhook: From={user_phone}, CallSid={call_sid}")
+    """Handle inbound call via TeXML. Telnyx POSTs JSON with event_type/payload, we return TeXML to record."""
+    body = get_formated_body()
+    print(f"RAW /answer: method={request.method} content_type={request.content_type} body={str(body)[:400]}")
 
     empty_xml = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
+    event_type = body.get('event_type', '')
+    payload = body.get('payload', {}) if isinstance(body.get('payload'), dict) else {}
+
+    # Only handle call_initiated — ignore hangup and other events
+    if event_type != 'call_initiated':
+        print(f"Answer webhook: ignoring event_type={event_type}")
+        return Response(empty_xml, mimetype='text/xml')
+
+    user_phone = payload.get('from')
+    call_sid = payload.get('call_leg_id')
+
+    print(f"Answer webhook call_initiated: from={user_phone}, call_leg_id={call_sid}")
+
     if not user_phone or not call_sid:
-        print("Answer webhook: missing From or CallSid — ignoring (likely a status event)")
+        print("Answer webhook: missing from or call_leg_id")
         return Response(empty_xml, mimetype='text/xml')
 
     existing_call = db.session.query(Call).filter_by(id=call_sid).first()
@@ -472,7 +481,7 @@ def answer():
         db.session.commit()
         print(f"Created new call record: {call_sid}")
     else:
-        print(f"Duplicate /answer for call {call_sid}, returning empty response")
+        print(f"Duplicate call_initiated for {call_sid}, returning empty response")
         return Response(empty_xml, mimetype='text/xml')
 
     callback_url = f"{HOST}/record-complete?call-uuid={call_sid}"
@@ -481,7 +490,7 @@ def answer():
     <Record maxLength="5400" playBeep="false" recordingStatusCallback="{callback_url}" recordingStatusCallbackEvent="completed" timeout="50"/>
 </Response>'''
 
-    print(f"Returning TeXML for call {call_sid}: {texml}")
+    print(f"Returning TeXML for call {call_sid}")
     return Response(texml, mimetype='text/xml')
 
 
