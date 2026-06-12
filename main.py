@@ -506,7 +506,7 @@ def _handle_call_initiated(payload):
     telnyx_call_control(call_control_id, "record_start", {
         "format": "mp3",
         "channels": "single",
-        "play_beep": False,
+        "play_beep": True,
     })
 
     return jsonify({}), 200
