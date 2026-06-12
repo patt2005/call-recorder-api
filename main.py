@@ -85,6 +85,9 @@ def process_transcript_background(call_uuid, download_url=None):
                 print(f"Failed to update call with error fallback: {str(inner_e)}")
 
 def get_formated_body():
+    # Always include query string params (Telnyx TeXML sends GET with params in URL)
+    query_params = request.args.to_dict()
+
     if request.is_json:
         body = request.get_json()
         print(f"JSON body: {body}")
@@ -98,7 +101,12 @@ def get_formated_body():
         body = parse_qs(raw_data)
         body = {k: v[0] if len(v) == 1 else v for k, v in body.items()}
         print(f"Parsed body: {body}")
-    return body
+
+    # Merge query params — they take lower priority than body fields
+    merged = {**query_params, **body}
+    if query_params:
+        print(f"Query params: {query_params}")
+    return merged
 
 @app.route('/get_calls_for_user', methods=['POST'])
 def get_calls_for_user():
