@@ -23,6 +23,8 @@ CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
 TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
+notification_scheduler = NotificationScheduler()
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -478,6 +480,7 @@ def answer():
 
 
 def _handle_call_initiated(payload):
+    import threading
     user_phone = payload.get('from')
     call_control_id = payload.get('call_control_id')
 
@@ -498,17 +501,18 @@ def _handle_call_initiated(payload):
     db.session.commit()
     print(f"Created new call record: {call_control_id}")
 
-    answer_resp = telnyx_call_control(call_control_id, "answer")
-    if answer_resp.status_code not in (200, 201):
-        print(f"Failed to answer call: {answer_resp.status_code}")
-        return jsonify({}), 200
+    def do_call_control():
+        answer_resp = telnyx_call_control(call_control_id, "answer")
+        if answer_resp.status_code not in (200, 201):
+            print(f"Failed to answer call: {answer_resp.status_code}")
+            return
+        telnyx_call_control(call_control_id, "record_start", {
+            "format": "mp3",
+            "channels": "single",
+            "play_beep": True,
+        })
 
-    telnyx_call_control(call_control_id, "record_start", {
-        "format": "mp3",
-        "channels": "single",
-        "play_beep": True,
-    })
-
+    threading.Thread(target=do_call_control, daemon=True).start()
     return jsonify({}), 200
 
 
