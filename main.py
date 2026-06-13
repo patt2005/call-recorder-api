@@ -23,8 +23,6 @@ CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
 TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
-notification_scheduler = NotificationScheduler()
-
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -37,6 +35,8 @@ CORS(app, origins=[HOST])
 db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
+
+notification_scheduler = NotificationScheduler(app)
 
 def process_transcript_background(call_uuid, download_url=None):
     """Background: transcribe recording with Whisper and save to CallTranscript.
