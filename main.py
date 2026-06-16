@@ -370,9 +370,12 @@ def get_service_phone_number(country_code):
 
     us_number = "+16063938208"
     kr_number = "+82308640190"
+    hu_number = "+36212012968"
 
     if country_code == "KR":
         phone_number = kr_number
+    elif country_code == "HU":
+        phone_number = hu_number
     else:
         phone_number = us_number
 
