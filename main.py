@@ -369,7 +369,7 @@ def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
     us_number = "+16063938208"
-    kr_number = "+82308640190"
+    kr_number = "00308640190"
     hu_number = "+36212012968"
 
     if country_code == "KR":
