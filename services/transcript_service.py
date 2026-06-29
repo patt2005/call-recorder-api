@@ -87,3 +87,47 @@ class TranscriptService:
         except Exception as e:
             self.logger.error("Whisper transcription failed for %s: %s", recording_url, e)
             raise
+
+    def get_transcript_from_bytes(self, audio_bytes: bytes, filename: str = "recording.mp3") -> dict:
+        """
+        Transcribe audio from raw bytes (already downloaded) with Whisper.
+
+        Args:
+            audio_bytes: Raw audio bytes (e.g. MP3).
+            filename: Filename hint for Whisper (determines format).
+
+        Returns: same shape as get_transcript()
+        """
+        if not audio_bytes:
+            return {"text": "", "segments": [], "language": None, "duration": None}
+
+        try:
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = filename
+
+            transcription = self.client.audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1",
+                response_format="verbose_json",
+                timestamp_granularities=["segment"],
+            )
+
+            segments = []
+            raw_segments = getattr(transcription, "segments", None) or []
+            for seg in raw_segments:
+                segments.append({
+                    "start": getattr(seg, "start", 0.0),
+                    "end": getattr(seg, "end", 0.0),
+                    "text": (getattr(seg, "text", "") or "").strip(),
+                })
+
+            return {
+                "text": getattr(transcription, "text", "") or "",
+                "segments": segments,
+                "language": getattr(transcription, "language", None),
+                "duration": getattr(transcription, "duration", None),
+            }
+
+        except Exception as e:
+            self.logger.error("Whisper transcription from bytes failed: %s", e)
+            raise
