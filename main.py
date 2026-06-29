@@ -625,6 +625,8 @@ def answer_twilio():
     body = get_formated_body()
     response = VoiceResponse()
 
+    print("Twilio answer reponse")
+
     if not body:
         print("Twilio answer webhook: missing body")
         response.say("Sorry, we could not process this call.")
