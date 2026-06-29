@@ -380,8 +380,7 @@ def send_test_notification():
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
-    # us_number = "+16063938208"
-    us_number = "+13502079937"
+    us_number = "+16063938208"
     kr_number = "00308640190"
     hu_number = "+36212012968"
     ro_number = "+40376060084"
