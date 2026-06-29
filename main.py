@@ -94,6 +94,7 @@ def process_transcript_background(call_uuid, download_url=None):
                 print(f"Failed to update call with error fallback: {str(inner_e)}")
 
 def get_formated_body():
+    print(f"Content-Type: {request.content_type}")
     if request.is_json:
         body = request.get_json()
         print(f"JSON body: {body}")
@@ -103,9 +104,13 @@ def get_formated_body():
     else:
         raw_data = request.get_data(as_text=True)
         print(f"Raw data: {raw_data}")
-        from urllib.parse import parse_qs
-        body = parse_qs(raw_data)
-        body = {k: v[0] if len(v) == 1 else v for k, v in body.items()}
+        if raw_data:
+            from urllib.parse import parse_qs
+            body = parse_qs(raw_data)
+            body = {k: v[0] if len(v) == 1 else v for k, v in body.items()}
+        else:
+            # Fallback: try parsing form even if content-type wasn't matched
+            body = request.values.to_dict()
         print(f"Parsed body: {body}")
     return body
 
