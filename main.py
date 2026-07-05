@@ -695,7 +695,7 @@ def answer_twilio():
     print(f"Twilio: created new call record with CallSid: {call_sid}")
 
     response.record(
-        play_beep=False,
+        play_beep=True,
         max_length=5400,
         transcribe=False,
         recording_status_callback=f"{HOST}/record-complete?call-uuid={call_sid}",
