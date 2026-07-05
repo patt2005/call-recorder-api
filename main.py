@@ -6,6 +6,7 @@ from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client as TwilioClient
 import json
 import os
+import re
 import threading
 from datetime import datetime
 import requests
@@ -114,6 +115,26 @@ def get_formated_body():
         print(f"Parsed body: {body}")
     return body
 
+def _parse_sip_number(raw: str) -> str:
+    """Extract a plain E.164-style phone number from a SIP URI or raw number.
+
+    Examples:
+      'sip:821086666734@46.19.214.14' -> '+821086666734'
+      '+821086666734'                 -> '+821086666734'
+      '821086666734'                  -> '+821086666734'
+    """
+    s = raw.strip()
+    # Strip sip: / sips: scheme and anything after @
+    if s.lower().startswith('sip:') or s.lower().startswith('sips:'):
+        s = s.split(':', 1)[1]  # remove scheme
+    s = s.split('@')[0]         # remove host part
+    # Keep only digits and leading +
+    digits = re.sub(r'[^\d+]', '', s)
+    if digits and not digits.startswith('+'):
+        digits = '+' + digits
+    return digits
+
+
 @app.route('/get_calls_for_user', methods=['POST'])
 def get_calls_for_user():
     body = get_formated_body()
@@ -128,13 +149,23 @@ def get_calls_for_user():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         user_phone = user.phone_number
-    
+
+    user_phone = _parse_sip_number(user_phone or '')
+
     calls = (
         db.session.query(Call)
         .options(joinedload(Call.transcript))
         .filter_by(from_phone=user_phone)
         .all()
     )
+    # Retry without leading + if nothing found
+    if not calls and user_phone.startswith('+'):
+        calls = (
+            db.session.query(Call)
+            .options(joinedload(Call.transcript))
+            .filter_by(from_phone=user_phone.lstrip('+'))
+            .all()
+        )
     calls_list = []
     for call in calls:
         transcript = getattr(call, 'transcript', None)
@@ -637,7 +668,8 @@ def answer_twilio():
         response.hangup()
         return Response(str(response), mimetype='text/xml')
 
-    user_phone = body.get('From')
+    raw_from = body.get('From') or ''
+    user_phone = _parse_sip_number(raw_from)
     call_sid = body.get('CallSid')
 
     if not user_phone or not call_sid:
@@ -652,6 +684,9 @@ def answer_twilio():
         return Response(str(response), mimetype='text/xml')
 
     user = db.session.query(User).filter_by(phone_number=user_phone).first()
+    if user is None:
+        # Try without leading +
+        user = db.session.query(User).filter_by(phone_number=user_phone.lstrip('+')).first()
     call = Call(call_sid, user_phone, datetime.now(), user_id=user.id if user else None)
     db.session.add(call)
     db.session.commit()
