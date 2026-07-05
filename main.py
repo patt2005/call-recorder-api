@@ -629,7 +629,7 @@ def answer_twilio():
     body = get_formated_body()
     response = VoiceResponse()
 
-    print("Twilio answer reponse")
+    print("Twilio answer response")
 
     if not body:
         print("Twilio answer webhook: missing body")
@@ -710,16 +710,18 @@ def record_complete():
         if user:
             call.user_id = user.id
 
-    # Build a proxy URL that fetches the Twilio MP3 with auth credentials
-    if recording_sid:
-        proxy_url = f"{HOST}/recording/twilio/{recording_sid}"
-    elif recording_url and 'Recordings/' in recording_url:
-        sid = recording_url.split('Recordings/')[-1].split('.')[0]
-        proxy_url = f"{HOST}/recording/twilio/{sid}"
+    # Use the Twilio recording URL directly (publicly accessible, no auth needed)
+    if recording_url:
+        direct_url = recording_url if recording_url.endswith('.mp3') else recording_url + '.mp3'
+    elif recording_sid:
+        direct_url = (
+            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}"
+            f"/Recordings/{recording_sid}.mp3"
+        )
     else:
-        proxy_url = recording_url
+        direct_url = None
 
-    call.recording_url = proxy_url
+    call.recording_url = direct_url
     call.recording_duration = int(recording_length) if recording_length else None
     call.recording_status = 'completed'
 
@@ -746,17 +748,9 @@ def record_complete():
         success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
         print(f"Push notification {'sent' if success else 'failed'} for Twilio call {call_uuid}")
 
-    # For Whisper we need the raw Twilio URL (with auth). Build it from the SID.
-    twilio_download_url = None
-    if recording_sid and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-        twilio_download_url = (
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}"
-            f"/Recordings/{recording_sid}.mp3"
-        )
-
     background_thread = threading.Thread(
         target=_process_twilio_transcript_background,
-        args=(call_uuid, twilio_download_url),
+        args=(call_uuid, direct_url),
     )
     background_thread.daemon = True
     background_thread.start()
@@ -783,14 +777,10 @@ def _process_twilio_transcript_background(call_uuid, twilio_url):
                 transcript.status = 'processing'
             db.session.commit()
 
-            # Fetch audio bytes from Twilio (requires Basic auth)
+            # Fetch audio bytes directly from Twilio (URL is publicly accessible)
             audio_bytes = None
-            if twilio_url and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-                r = requests.get(
-                    twilio_url,
-                    auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                    timeout=120,
-                )
+            if twilio_url:
+                r = requests.get(twilio_url, timeout=120)
                 if r.status_code == 200:
                     audio_bytes = r.content
                     print(f"Downloaded Twilio recording: {len(audio_bytes)} bytes")
@@ -799,13 +789,12 @@ def _process_twilio_transcript_background(call_uuid, twilio_url):
 
             transcript_service = TranscriptService(api_key=os.environ.get("OPENAI_API_KEY"))
 
-            if audio_bytes:
-                result = transcript_service.get_transcript_from_bytes(
-                    audio_bytes, filename="recording.mp3"
-                )
-            else:
-                # Fallback: try the proxy URL (may not work without auth)
-                result = transcript_service.get_transcript(call.recording_url)
+            if not audio_bytes:
+                raise Exception(f"Could not download recording from {twilio_url}")
+
+            result = transcript_service.get_transcript_from_bytes(
+                audio_bytes, filename="recording.mp3"
+            )
 
             transcript.text = result.get("text") or ""
             transcript.segments = json.dumps(result["segments"]) if result.get("segments") else None
