@@ -152,13 +152,15 @@ def get_calls_for_user():
 
     user_phone = _parse_sip_number(user_phone or '')
 
+    print("Parsed user_phone:", user_phone)
+
     calls = (
         db.session.query(Call)
         .options(joinedload(Call.transcript))
         .filter_by(from_phone=user_phone)
         .all()
     )
-    # Retry without leading + if nothing found
+
     if not calls and user_phone.startswith('+'):
         calls = (
             db.session.query(Call)
