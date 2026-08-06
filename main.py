@@ -510,6 +510,8 @@ def answer():
     """Handle incoming Telnyx Call Control webhook and start recording."""
     body = get_formated_body()
 
+    print(f"Got this body: {body}")
+
     if not body:
         print("Answer webhook: missing body")
         return jsonify({}), 200
