@@ -509,8 +509,10 @@ def telnyx_call_control(call_control_id, action, payload=None):
 def answer():
     """Handle incoming Telnyx Call Control webhook and start recording."""
     body = get_formated_body()
+    hd = request.headers
 
     print(f"Got this body: {body}")
+    print(f"Got this headers: {hd}")
 
     if not body:
         print("Answer webhook: missing body")
@@ -534,12 +536,19 @@ def answer():
 
 def _handle_call_initiated(payload):
     import threading
-    user_phone = payload.get('from')
+    service_phone = payload.get('from')
     call_control_id = payload.get('call_control_id')
 
-    print(f"call.initiated: user_phone={user_phone}, call_control_id={call_control_id}")
+    # Read the real user phone from the custom SIP header sent by the iOS app
+    custom_headers = payload.get('custom_headers') or []
+    user_phone = next(
+        (h['value'] for h in custom_headers if h.get('name') == 'X-User-Phone'),
+        service_phone
+    )
 
-    if not user_phone or not call_control_id:
+    print(f"call.initiated: user_phone={user_phone}, service_phone={service_phone}, call_control_id={call_control_id}")
+
+    if not service_phone or not call_control_id:
         print("call.initiated: missing from or call_control_id")
         return jsonify({}), 200
 
