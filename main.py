@@ -4,6 +4,7 @@ from flask_cors import CORS
 from flask_migrate import Migrate
 from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client as TwilioClient
+import base64
 import json
 import os
 import re
@@ -490,6 +491,79 @@ def transcribe_recording():
         return jsonify({'error': str(e)}), 500
 
 
+TELNYX_VERIFY_PROFILE_ID = os.environ.get('TELNYX_VERIFY_PROFILE_ID')
+
+@app.route('/api/verify/send', methods=['POST'])
+def send_verification():
+    """Send an SMS OTP to the user's phone number via Telnyx Verify."""
+    body = get_formated_body()
+    phone_number = body.get('phoneNumber')
+
+    if not phone_number:
+        return jsonify({'error': 'phoneNumber is required'}), 400
+
+    if not TELNYX_VERIFY_PROFILE_ID:
+        return jsonify({'error': 'Telnyx Verify profile not configured'}), 500
+
+    response = requests.post(
+        'https://api.telnyx.com/v2/verifications/sms',
+        json={
+            'phone_number': phone_number,
+            'verify_profile_id': TELNYX_VERIFY_PROFILE_ID,
+        },
+        headers={
+            'Authorization': f'Bearer {TELNYX_API_KEY}',
+            'Content-Type': 'application/json',
+        },
+    )
+
+    print(f"Telnyx Verify send: {response.status_code} {response.text}")
+
+    if response.status_code in (200, 201):
+        return jsonify({'success': True}), 200
+    else:
+        data = response.json() if response.content else {}
+        return jsonify({'error': data.get('errors', [{}])[0].get('detail', 'Failed to send code')}), 400
+
+
+@app.route('/api/verify/check', methods=['POST'])
+def check_verification():
+    """Check the OTP code entered by the user."""
+    body = get_formated_body()
+    phone_number = body.get('phoneNumber')
+    code = body.get('code')
+
+    if not phone_number or not code:
+        return jsonify({'error': 'phoneNumber and code are required'}), 400
+
+    if not TELNYX_VERIFY_PROFILE_ID:
+        return jsonify({'error': 'Telnyx Verify profile not configured'}), 500
+
+    response = requests.get(
+        'https://api.telnyx.com/v2/verifications/by_phone_number/{}/actions/verify'.format(phone_number),
+        json={
+            'code': code,
+            'verify_profile_id': TELNYX_VERIFY_PROFILE_ID,
+        },
+        headers={
+            'Authorization': f'Bearer {TELNYX_API_KEY}',
+            'Content-Type': 'application/json',
+        },
+    )
+
+    print(f"Telnyx Verify check: {response.status_code} {response.text}")
+
+    if response.status_code == 200:
+        data = response.json().get('data', {})
+        verified = data.get('response_code') == 'accepted'
+        return jsonify({'verified': verified}), 200
+    else:
+        return jsonify({'verified': False, 'error': 'Verification failed'}), 200
+
+
+TELNYX_CONNECTION_ID = os.environ.get('TELNYX_CONNECTION_ID')
+
+
 def telnyx_call_control(call_control_id, action, payload=None):
     """Issue a Telnyx Call Control API command."""
     url = f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/{action}"
@@ -505,14 +579,37 @@ def telnyx_call_control(call_control_id, action, payload=None):
     return response
 
 
+def telnyx_dial(payload: dict):
+    """Create an outbound leg to the destination."""
+    resp = requests.post(
+        "https://api.telnyx.com/v2/calls",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {TELNYX_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    print(f"Telnyx Dial: {resp.status_code} {resp.text}")
+    return resp
+
+
+def encode_state(d: dict) -> str:
+    return base64.b64encode(json.dumps(d).encode()).decode()
+
+
+def decode_state(s):
+    if not s:
+        return {}
+    try:
+        return json.loads(base64.b64decode(s).decode())
+    except Exception:
+        return {}
+
+
 @app.route("/answer", methods=["GET", "POST"])
 def answer():
-    """Handle incoming Telnyx Call Control webhook and start recording."""
+    """Handle Telnyx Call Control webhooks."""
     body = get_formated_body()
-    hd = request.headers
-
-    print(f"Got this body: {body}")
-    print(f"Got this headers: {hd}")
 
     if not body:
         print("Answer webhook: missing body")
@@ -524,57 +621,91 @@ def answer():
 
     print(f"Answer webhook: event_type={event_type}")
 
-    if event_type == 'call.initiated':
+    state = decode_state(payload.get('client_state'))
+
+    if event_type == 'call.initiated' and state.get('stage') != 'leg_b':
         return _handle_call_initiated(payload)
+
+    if event_type == 'call.answered' and state.get('stage') == 'leg_b':
+        return _handle_leg_b_answered(payload, state)
 
     if event_type == 'call.recording.saved':
         return _handle_recording_saved(payload)
 
-    # All other events (call.answered, call.hangup, etc.) — acknowledge silently
     return jsonify({}), 200
 
 
-def _handle_call_initiated(payload):
-    import threading
-    service_phone = payload.get('from')
-    call_control_id = payload.get('call_control_id')
+def _resolve_caller_id(user, service_phone):
+    if user and getattr(user, 'verified_caller_id', None):
+        return user.verified_caller_id
+    return service_phone
 
-    # Read the real user phone from the custom SIP header sent by the iOS app
+
+def _handle_call_initiated(payload):
+    leg_a_id = payload.get('call_control_id')
+    service_phone = payload.get('from')
+    destination = _parse_sip_number(payload.get('to') or '')
     custom_headers = payload.get('custom_headers') or []
     user_phone = next(
         (h['value'] for h in custom_headers if h.get('name') == 'X-User-Phone'),
         service_phone
     )
 
-    print(f"call.initiated: user_phone={user_phone}, service_phone={service_phone}, call_control_id={call_control_id}")
+    print(f"call.initiated: leg_a={leg_a_id} user={user_phone} dest={destination}")
 
-    if not service_phone or not call_control_id:
-        print("call.initiated: missing from or call_control_id")
+    if not leg_a_id or not destination:
+        print("call.initiated: missing call_control_id or destination")
         return jsonify({}), 200
 
-    existing_call = db.session.query(Call).filter_by(id=call_control_id).first()
-    if existing_call:
-        print(f"Duplicate call.initiated, ignoring: {call_control_id}")
+    if db.session.query(Call).filter_by(id=leg_a_id).first():
+        print(f"Duplicate call.initiated, ignoring: {leg_a_id}")
         return jsonify({}), 200
 
     user = db.session.query(User).filter_by(phone_number=user_phone).first()
-    call = Call(call_control_id, user_phone, datetime.now(), user_id=user.id if user else None)
+    call = Call(leg_a_id, user_phone, datetime.now(), user_id=user.id if user else None)
     db.session.add(call)
     db.session.commit()
-    print(f"Created new call record: {call_control_id}")
+    print(f"Parked leg A: {leg_a_id}")
 
-    def do_call_control():
-        answer_resp = telnyx_call_control(call_control_id, "answer")
-        if answer_resp.status_code not in (200, 201):
-            print(f"Failed to answer call: {answer_resp.status_code}")
+    caller_id = _resolve_caller_id(user, service_phone)
+    connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
+
+    def dial_leg_b():
+        telnyx_dial({
+            "connection_id": connection_id,
+            "to": destination,
+            "from": caller_id,
+            "link_to": leg_a_id,
+            "client_state": encode_state({"stage": "leg_b", "peer": leg_a_id}),
+            "webhook_url": f"{HOST}/answer",
+            "timeout_secs": 30,
+        })
+
+    threading.Thread(target=dial_leg_b, daemon=True).start()
+    return jsonify({}), 200
+
+
+def _handle_leg_b_answered(payload, state):
+    leg_b_id = payload.get('call_control_id')
+    leg_a_id = state.get('peer')
+
+    print(f"leg_b answered: leg_b={leg_b_id} leg_a={leg_a_id}")
+
+    if not leg_b_id or not leg_a_id:
+        return jsonify({}), 200
+
+    def bridge_and_record():
+        b = telnyx_call_control(leg_b_id, "bridge", {"call_control_id": leg_a_id})
+        if b.status_code not in (200, 201):
+            print(f"Bridge failed: {b.status_code} {b.text}")
             return
-        telnyx_call_control(call_control_id, "record_start", {
+        telnyx_call_control(leg_a_id, "record_start", {
             "format": "mp3",
             "channels": "single",
             "play_beep": True,
         })
 
-    threading.Thread(target=do_call_control, daemon=True).start()
+    threading.Thread(target=bridge_and_record, daemon=True).start()
     return jsonify({}), 200
 
 
