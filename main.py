@@ -669,6 +669,7 @@ def _handle_call_initiated(payload):
     print(f"Parked leg A: {leg_a_id}")
 
     caller_id = _resolve_caller_id(user, service_phone)
+    # caller_id = "+37360282857"
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
     def dial_leg_b():
