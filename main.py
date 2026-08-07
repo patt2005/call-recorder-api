@@ -581,6 +581,7 @@ def telnyx_call_control(call_control_id, action, payload=None):
 
 def telnyx_dial(payload: dict):
     """Create an outbound leg to the destination."""
+    print(f"Dialing with this request body: {payload}")
     resp = requests.post(
         "https://api.telnyx.com/v2/calls",
         json=payload,
