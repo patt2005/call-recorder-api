@@ -679,7 +679,6 @@ def _handle_call_initiated(payload):
             "from": caller_id,
             "link_to": leg_a_id,
             "client_state": encode_state({"stage": "leg_b", "peer": leg_a_id}),
-            "webhook_url": f"{HOST}/answer",
             "timeout_secs": 30,
         })
 
