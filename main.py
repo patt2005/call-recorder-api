@@ -636,12 +636,6 @@ def answer():
     return jsonify({}), 200
 
 
-def _resolve_caller_id(user, service_phone):
-    if user and getattr(user, 'verified_caller_id', None):
-        return user.verified_caller_id
-    return service_phone
-
-
 def _handle_call_initiated(payload):
     leg_a_id = payload.get('call_control_id')
     service_phone = payload.get('from')
@@ -668,9 +662,7 @@ def _handle_call_initiated(payload):
     db.session.commit()
     print(f"Parked leg A: {leg_a_id}")
 
-    # caller_id = _resolve_caller_id(user, service_phone)
     # caller_id = user_phone
-    # caller_id = "+37360282857"
     caller_id = service_phone
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
