@@ -662,8 +662,8 @@ def _handle_call_initiated(payload):
     db.session.commit()
     print(f"Parked leg A: {leg_a_id}")
 
-    # caller_id = user_phone
-    caller_id = service_phone
+    caller_id = user_phone
+    # caller_id = service_phone
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
     def dial_leg_b():
