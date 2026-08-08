@@ -797,12 +797,20 @@ def _handle_recording_saved(payload):
 @app.route("/answer/twilio", methods=["GET", "POST"])
 def answer_twilio():
     body = get_formated_body()
-    response = VoiceResponse()
-    caller = (body or {}).get('From', 'unknown')
-    print(f"Twilio test call received from: {caller}")
-    response.say(f"Call received from {caller}")
-    response.hangup()
-    return Response(str(response), mimetype='text/xml')
+    data = (body or {}).get('data', {})
+    payload = data.get('payload', {}) if isinstance(data, dict) else {}
+    caller = payload.get('from', 'unknown')
+    call_control_id = payload.get('call_control_id')
+    print(f"Telnyx test call received from: {caller}")
+    if call_control_id:
+        telnyx_call_control(call_control_id, "answer", {})
+        telnyx_call_control(call_control_id, "speak", {
+            "payload": f"Call received from {caller}",
+            "voice": "female",
+            "language": "en-US",
+        })
+        telnyx_call_control(call_control_id, "hangup", {})
+    return jsonify({}), 200
 
 
 @app.route('/record-complete', methods=['POST'])
