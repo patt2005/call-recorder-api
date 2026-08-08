@@ -647,7 +647,7 @@ def _handle_call_initiated(payload):
     db.session.commit()
     print(f"Parked leg A: {leg_a_id}")
 
-    caller_id = user_phone if _same_country(service_phone, destination) else service_phone
+    caller_id = user_phone if (user and user.is_caller_id_verified and _same_country(service_phone, destination)) else service_phone
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
     def dial_leg_b():
