@@ -15,6 +15,7 @@ class User(db.Model):
     fcm_token = Column(String, nullable=True)
     language = Column(String, nullable=True)
     push_notifications_enabled = Column(Boolean, nullable=False, default=True)
+    is_caller_id_verified = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

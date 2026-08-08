@@ -520,6 +520,15 @@ def check_verification():
     print(f"Telnyx verified_numbers check: {response.status_code} {response.text}")
 
     if response.status_code == 200:
+        try:
+            user = db.session.query(User).filter_by(phone_number=phone_number).first()
+            if user:
+                user.is_caller_id_verified = True
+                db.session.commit()
+                print(f"Marked is_caller_id_verified=True for {phone_number}")
+        except Exception as e:
+            print(f"Failed to update is_caller_id_verified: {e}")
+
         return jsonify({'verified': True}), 200
     else:
         return jsonify({'verified': False, 'error': 'Verification failed'}), 200
