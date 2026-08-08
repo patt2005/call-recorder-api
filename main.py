@@ -804,51 +804,12 @@ def _handle_recording_saved(payload):
 
 @app.route("/answer/twilio", methods=["GET", "POST"])
 def answer_twilio():
-    """Handle incoming Twilio call and start recording. Returns TwiML."""
     body = get_formated_body()
     response = VoiceResponse()
-
-    print("Twilio answer response")
-
-    if not body:
-        print("Twilio answer webhook: missing body")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-
-    raw_from = body.get('From') or ''
-    user_phone = _parse_sip_number(raw_from)
-    call_sid = body.get('CallSid')
-
-    if not user_phone or not call_sid:
-        print(f"Twilio answer webhook: missing From or CallSid. body={body}")
-        response.say("Sorry, we could not process this call.")
-        response.hangup()
-        return Response(str(response), mimetype='text/xml')
-
-    existing_call = db.session.query(Call).filter_by(id=call_sid).first()
-    if existing_call:
-        print(f"Duplicate Twilio call webhook, ignoring: {call_sid}")
-        return Response(str(response), mimetype='text/xml')
-
-    user = db.session.query(User).filter_by(phone_number=user_phone).first()
-    if user is None:
-        # Try without leading +
-        user = db.session.query(User).filter_by(phone_number=user_phone.lstrip('+')).first()
-    call = Call(call_sid, user_phone, datetime.now(), user_id=user.id if user else None)
-    db.session.add(call)
-    db.session.commit()
-    print(f"Twilio: created new call record with CallSid: {call_sid}")
-
-    response.record(
-        play_beep=True,
-        max_length=5400,
-        transcribe=False,
-        recording_status_callback=f"{HOST}/record-complete?call-uuid={call_sid}",
-        recording_status_callback_event="completed",
-        timeout=50,
-    )
-
+    caller = (body or {}).get('From', 'unknown')
+    print(f"Twilio test call received from: {caller}")
+    response.say(f"Call received from {caller}")
+    response.hangup()
     return Response(str(response), mimetype='text/xml')
 
 
