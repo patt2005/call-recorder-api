@@ -20,9 +20,8 @@ from services.file_service import upload_recording, get_recording_url
 from services.notification_scheduler import NotificationScheduler
 from services.notification_copy_data import pick_random_coherent
 
-HOST = os.environ.get('HOST', 'https://call-recorder-api-production-bc8d.up.railway.app')
+HOST = os.environ.get('HOST')
 CONNECTION_STRING = os.environ.get('DATABASE_URL')
-
 TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
 app = Flask(__name__)
@@ -383,34 +382,15 @@ def update_notification_settings():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/notifications/test', methods=['POST'])
-def send_test_notification():
-    """Send a test promotional notification to the given FCM token using localized copy."""
-    body = get_formated_body()
-
-    fcm_token = body.get('fcmToken')
-    language = body.get('language')
-
-    if not fcm_token:
-        return jsonify({'error': 'fcmToken is required'}), 400
-
-    title, notification_body = pick_random_coherent(language=language)
-    ok = push_notification_service.send_notification(fcm_token, title, notification_body)
-
-    if ok:
-        return jsonify({'success': True, 'title': title, 'body': notification_body}), 200
-    else:
-        return jsonify({'success': False, 'error': 'Failed to send notification'}), 500
-
 
 @app.route('/api/service/phone/<country_code>', methods=['GET'])
 def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
     us_number = "+16063938208"
-    kr_number = "00308640190"
-    hu_number = "06212012968"
-    ro_number = "0376060084"
+    kr_number = "+82308640190"
+    hu_number = "+36212012968"
+    ro_number = "+40376060084"
 
     if country_code == "KR":
         phone_number = kr_number
@@ -488,21 +468,18 @@ TELNYX_VERIFY_PROFILE_ID = os.environ.get('TELNYX_VERIFY_PROFILE_ID')
 
 @app.route('/api/verify/send', methods=['POST'])
 def send_verification():
-    """Send an SMS OTP to the user's phone number via Telnyx Verify."""
+    """Send an SMS code to verify a number as an outbound caller ID via Telnyx."""
     body = get_formated_body()
     phone_number = body.get('phoneNumber')
 
     if not phone_number:
         return jsonify({'error': 'phoneNumber is required'}), 400
 
-    if not TELNYX_VERIFY_PROFILE_ID:
-        return jsonify({'error': 'Telnyx Verify profile not configured'}), 500
-
     response = requests.post(
-        'https://api.telnyx.com/v2/verifications/sms',
+        'https://api.telnyx.com/v2/verified_numbers',
         json={
             'phone_number': phone_number,
-            'verify_profile_id': TELNYX_VERIFY_PROFILE_ID,
+            'verification_method': 'sms',
         },
         headers={
             'Authorization': f'Bearer {TELNYX_API_KEY}',
@@ -510,18 +487,20 @@ def send_verification():
         },
     )
 
-    print(f"Telnyx Verify send: {response.status_code} {response.text}")
+    print(f"Telnyx verified_numbers send: {response.status_code} {response.text}")
 
     if response.status_code in (200, 201):
         return jsonify({'success': True}), 200
     else:
         data = response.json() if response.content else {}
-        return jsonify({'error': data.get('errors', [{}])[0].get('detail', 'Failed to send code')}), 400
+        errors = data.get('errors', [{}])
+        detail = errors[0].get('detail', 'Failed to send code') if errors else 'Failed to send code'
+        return jsonify({'error': detail}), 400
 
 
 @app.route('/api/verify/check', methods=['POST'])
 def check_verification():
-    """Check the OTP code entered by the user."""
+    """Verify the SMS code and register the number as an outbound caller ID."""
     body = get_formated_body()
     phone_number = body.get('phoneNumber')
     code = body.get('code')
@@ -529,27 +508,19 @@ def check_verification():
     if not phone_number or not code:
         return jsonify({'error': 'phoneNumber and code are required'}), 400
 
-    if not TELNYX_VERIFY_PROFILE_ID:
-        return jsonify({'error': 'Telnyx Verify profile not configured'}), 500
-
     response = requests.post(
-        'https://api.telnyx.com/v2/verifications/by_phone_number/{}/actions/verify'.format(phone_number),
-        json={
-            'code': code,
-            'verify_profile_id': TELNYX_VERIFY_PROFILE_ID,
-        },
+        'https://api.telnyx.com/v2/verified_numbers/{}/actions/verify'.format(phone_number),
+        json={'verification_code': code},
         headers={
             'Authorization': f'Bearer {TELNYX_API_KEY}',
             'Content-Type': 'application/json',
         },
     )
 
-    print(f"Telnyx Verify check: {response.status_code} {response.text}")
+    print(f"Telnyx verified_numbers check: {response.status_code} {response.text}")
 
     if response.status_code == 200:
-        data = response.json().get('data', {})
-        verified = data.get('response_code') == 'accepted'
-        return jsonify({'verified': verified}), 200
+        return jsonify({'verified': True}), 200
     else:
         return jsonify({'verified': False, 'error': 'Verification failed'}), 200
 
@@ -656,7 +627,6 @@ def _handle_call_initiated(payload):
     print(f"Parked leg A: {leg_a_id}")
 
     caller_id = user_phone
-    # caller_id = service_phone
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
     def dial_leg_b():
@@ -786,8 +756,6 @@ def _handle_recording_saved(payload):
     print(f"Started Whisper transcription for call: {call_control_id}")
 
     return jsonify({}), 200
-
-
 
 
 if __name__ == "__main__":
