@@ -609,6 +609,18 @@ def answer():
     return jsonify({}), 200
 
 
+def _same_country(number_a, number_b):
+    """Return True if both E.164 numbers share the same 1-3 digit country code."""
+    a = re.sub(r'\D', '', number_a or '')
+    b = re.sub(r'\D', '', number_b or '')
+    if not a or not b:
+        return False
+    for length in (3, 2, 1):
+        if a[:length] == b[:length]:
+            return True
+    return False
+
+
 def _handle_call_initiated(payload):
     leg_a_id = payload.get('call_control_id')
     service_phone = payload.get('from')
@@ -635,7 +647,7 @@ def _handle_call_initiated(payload):
     db.session.commit()
     print(f"Parked leg A: {leg_a_id}")
 
-    caller_id = user_phone
+    caller_id = user_phone if _same_country(service_phone, destination) else service_phone
     connection_id = TELNYX_CONNECTION_ID or payload.get('connection_id')
 
     def dial_leg_b():
