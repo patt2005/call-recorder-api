@@ -2,8 +2,6 @@ from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
 from flask_migrate import Migrate
-from twilio.twiml.voice_response import VoiceResponse
-from twilio.rest import Client as TwilioClient
 import base64
 import json
 import os
@@ -11,7 +9,6 @@ import re
 import threading
 from datetime import datetime
 import requests
-from requests.auth import HTTPBasicAuth
 from sqlalchemy.orm import joinedload
 from database.database import db
 from models.call import Call
@@ -27,10 +24,6 @@ HOST = os.environ.get('HOST', 'https://call-recorder-api-production-bc8d.up.rail
 CONNECTION_STRING = os.environ.get('DATABASE_URL')
 
 TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
-
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN) else None
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = CONNECTION_STRING
@@ -539,7 +532,7 @@ def check_verification():
     if not TELNYX_VERIFY_PROFILE_ID:
         return jsonify({'error': 'Telnyx Verify profile not configured'}), 500
 
-    response = requests.get(
+    response = requests.post(
         'https://api.telnyx.com/v2/verifications/by_phone_number/{}/actions/verify'.format(phone_number),
         json={
             'code': code,
@@ -794,202 +787,7 @@ def _handle_recording_saved(payload):
 
     return jsonify({}), 200
 
-@app.route("/answer/twilio", methods=["GET", "POST"])
-def answer_twilio():
-    body = get_formated_body()
-    data = (body or {}).get('data', {})
-    payload = data.get('payload', {}) if isinstance(data, dict) else {}
-    caller = payload.get('from', 'unknown')
-    call_control_id = payload.get('call_control_id')
-    print(f"Telnyx test call received from: {caller}")
-    if call_control_id:
-        telnyx_call_control(call_control_id, "answer", {})
-        telnyx_call_control(call_control_id, "speak", {
-            "payload": f"Call received from {caller}",
-            "voice": "female",
-            "language": "en-US",
-        })
-        telnyx_call_control(call_control_id, "hangup", {})
-    return jsonify({}), 200
 
-
-@app.route('/record-complete', methods=['POST'])
-def record_complete():
-    """Twilio recording status callback — fires when a recording is ready."""
-    print(f"=== RECORD-COMPLETE ENDPOINT ===")
-    print(f"Request args: {request.args.to_dict()}")
-
-    call_uuid = request.args.get('call-uuid')
-    if not call_uuid:
-        return jsonify({'error': 'call-uuid parameter is required'}), 400
-
-    body = get_formated_body()
-
-    recording_status = body.get('RecordingStatus')
-    if recording_status != 'completed':
-        print(f"Ignoring recording status: {recording_status}")
-        return jsonify("Recording status not completed, ignoring."), 200
-
-    recording_url = body.get('RecordingUrl')
-    recording_sid = body.get('RecordingSid')
-    recording_length = body.get('RecordingDuration')
-
-    call = db.session.query(Call).filter_by(id=call_uuid).first()
-    if not call:
-        return jsonify({'error': 'Call not found'}), 404
-
-    if call.recording_status == 'completed' and call.recording_url:
-        print(f"Recording already processed for call UUID: {call_uuid}")
-        return jsonify("Recording already processed."), 200
-
-    # Resolve user
-    user = db.session.query(User).filter_by(id=call.user_id).first() if call.user_id else None
-    if user is None and call.from_phone:
-        user = (
-            db.session.query(User)
-            .filter_by(phone_number=call.from_phone)
-            .order_by(User.created_at.asc())
-            .first()
-        )
-        if user:
-            call.user_id = user.id
-
-    # Use the Twilio recording URL directly (publicly accessible, no auth needed)
-    if recording_url:
-        direct_url = recording_url if recording_url.endswith('.mp3') else recording_url + '.mp3'
-    elif recording_sid:
-        direct_url = (
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}"
-            f"/Recordings/{recording_sid}.mp3"
-        )
-    else:
-        direct_url = None
-
-    call.recording_url = direct_url
-    call.recording_duration = int(recording_length) if recording_length else None
-    call.recording_status = 'completed'
-
-    if not db.session.query(CallTranscript).filter_by(call_id=call_uuid).first():
-        db.session.add(CallTranscript(call_id=call_uuid, status='processing'))
-    db.session.commit()
-
-    # Push notification
-    if user and user.push_notifications_enabled and user.fcm_token:
-        transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-        call_data = {
-            'id': call.id,
-            'callDate': call.call_date.isoformat() if call.call_date else '',
-            'fromPhone': call.from_phone or '',
-            'toPhone': '',
-            'recordingDuration': call.recording_duration or 0,
-            'recordingStatus': call.recording_status or '',
-            'recordingUrl': call.recording_url or '',
-            'summary': call.summary or '',
-            'title': call.title or '',
-            'transcriptionStatus': transcript.status if transcript else 'pending',
-            'transcriptionText': transcript.text if transcript else '',
-        }
-        success = push_notification_service.send_recording_complete_notification(user.fcm_token, call_data)
-        print(f"Push notification {'sent' if success else 'failed'} for Twilio call {call_uuid}")
-
-    background_thread = threading.Thread(
-        target=_process_twilio_transcript_background,
-        args=(call_uuid, direct_url),
-    )
-    background_thread.daemon = True
-    background_thread.start()
-    print(f"Started Whisper transcription for Twilio call UUID: {call_uuid}")
-
-    return jsonify("Recording successfully completed."), 200
-
-
-def _process_twilio_transcript_background(call_uuid, twilio_url):
-    """Download the Twilio recording with Basic auth, then transcribe with Whisper."""
-    with app.app_context():
-        try:
-            print(f"Twilio Whisper transcription starting for call UUID: {call_uuid}")
-            call = db.session.query(Call).filter_by(id=call_uuid).first()
-            if not call:
-                print(f"Call not found for UUID: {call_uuid}")
-                return
-
-            transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-            if not transcript:
-                transcript = CallTranscript(call_id=call_uuid, status='processing')
-                db.session.add(transcript)
-            else:
-                transcript.status = 'processing'
-            db.session.commit()
-
-            # Fetch audio bytes directly from Twilio (URL is publicly accessible)
-            audio_bytes = None
-            if twilio_url:
-                r = requests.get(twilio_url, timeout=120)
-                if r.status_code == 200:
-                    audio_bytes = r.content
-                    print(f"Downloaded Twilio recording: {len(audio_bytes)} bytes")
-                else:
-                    print(f"Failed to download Twilio recording: {r.status_code}")
-
-            transcript_service = TranscriptService(api_key=os.environ.get("OPENAI_API_KEY"))
-
-            if not audio_bytes:
-                raise Exception(f"Could not download recording from {twilio_url}")
-
-            result = transcript_service.get_transcript_from_bytes(
-                audio_bytes, filename="recording.mp3"
-            )
-
-            transcript.text = result.get("text") or ""
-            transcript.segments = json.dumps(result["segments"]) if result.get("segments") else None
-            transcript.status = "completed"
-            transcript.language = result.get("language")
-            transcript.duration_seconds = result.get("duration")
-            transcript.updated_at = datetime.utcnow()
-            db.session.commit()
-            print(f"Twilio Whisper transcription completed for call UUID: {call_uuid}")
-        except Exception as e:
-            print(f"Error transcribing Twilio call {call_uuid}: {str(e)}")
-            try:
-                transcript = db.session.query(CallTranscript).filter_by(call_id=call_uuid).first()
-                if transcript:
-                    transcript.status = "failed"
-                    transcript.updated_at = datetime.utcnow()
-                db.session.commit()
-            except Exception as inner_e:
-                print(f"Failed to update transcript status: {str(inner_e)}")
-
-
-@app.route('/recording/twilio/<recording_sid>', methods=['GET'])
-def get_twilio_recording(recording_sid):
-    """Proxy endpoint — fetches a Twilio recording MP3 with Basic auth and streams it."""
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
-        return jsonify({'error': 'Twilio credentials not configured'}), 500
-
-    recording_url = (
-        f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}"
-        f"/Recordings/{recording_sid}.mp3"
-    )
-
-    try:
-        r = requests.get(
-            recording_url,
-            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            stream=True,
-            timeout=60,
-        )
-        if r.status_code == 200:
-            return Response(
-                r.content,
-                mimetype='audio/mpeg',
-                headers={
-                    'Content-Disposition': f'inline; filename="recording_{recording_sid}.mp3"',
-                    'Cache-Control': 'public, max-age=3600',
-                },
-            )
-        return jsonify({'error': f'Twilio returned {r.status_code}'}), r.status_code
-    except Exception as e:
-        return jsonify({'error': f'Error fetching recording: {str(e)}'}), 500
 
 
 if __name__ == "__main__":
