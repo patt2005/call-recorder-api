@@ -767,18 +767,16 @@ def _handle_recording_saved(payload):
     return jsonify({}), 200
 
 
-if __name__ == "__main__":
-    with app.app_context():
-        from flask_migrate import upgrade
-        try:
-            # Apply any pending migrations automatically
-            upgrade()
-            print("Database migrations applied successfully")
-        except Exception as e:
-            print(f"Migration error: {e}")
-            # Fallback to create_all if migrations haven't been initialized
-            db.create_all()
-            print("Database tables created using create_all()")
+with app.app_context():
+    from flask_migrate import upgrade
+    try:
+        upgrade()
+        print("Database migrations applied successfully")
+    except Exception as e:
+        print(f"Migration error: {e}")
+        db.create_all()
+        print("Database tables created using create_all()")
 
+if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
