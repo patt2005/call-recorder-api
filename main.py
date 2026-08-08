@@ -151,6 +151,7 @@ def get_calls_for_user():
         db.session.query(Call)
         .options(joinedload(Call.transcript))
         .filter_by(from_phone=user_phone)
+        .order_by(Call.call_date.desc())
         .all()
     )
 
@@ -159,6 +160,7 @@ def get_calls_for_user():
             db.session.query(Call)
             .options(joinedload(Call.transcript))
             .filter_by(from_phone=user_phone.lstrip('+'))
+            .order_by(Call.call_date.desc())
             .all()
         )
     calls_list = []
