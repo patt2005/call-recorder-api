@@ -397,6 +397,8 @@ def get_service_phone_number(country_code):
         phone_number = hu_number
     elif country_code == "RO":
         phone_number = ro_number
+    elif country_code == "MD":
+        phone_number = ro_number
     else:
         phone_number = us_number
 
