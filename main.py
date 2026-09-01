@@ -14,6 +14,7 @@ from database.database import db
 from models.call import Call
 from models.call_transcript import CallTranscript
 from models.user import User
+from models.telnyx_error_log import TelnyxErrorLog
 from services.push_notification_service import push_notification_service
 from services.transcript_service import TranscriptService
 from services.file_service import upload_recording, get_recording_url
@@ -390,15 +391,9 @@ def get_service_phone_number(country_code):
     """Get the service phone number for the application."""
 
     us_number = "+16063938208"
-    hu_number = "+36212012968"
-    ro_number = "+40376060084"
     jp_number = "+815031498481"
 
-    if country_code == "HU":
-        phone_number = hu_number
-    elif country_code == "RO":
-        phone_number = ro_number
-    elif country_code == "JP":
+    if country_code == "JP":
         phone_number = jp_number
     else:
         phone_number = us_number
@@ -779,6 +774,61 @@ def _handle_recording_saved(payload):
     print(f"Started Whisper transcription for call: {call_control_id}")
 
     return jsonify({}), 200
+
+
+@app.route('/api/errors/telnyx', methods=['POST'])
+def log_telnyx_error():
+    """Receive SDK/call error reports from the iOS app for diagnostics."""
+    try:
+        body = get_formated_body()
+        user_id = body.get('userId')
+        error_type = body.get('errorType')
+        message = body.get('message', '')
+        platform = body.get('platform', 'ios')
+
+        if not error_type:
+            return jsonify({'error': 'errorType is required'}), 400
+
+        log = TelnyxErrorLog(
+            user_id=user_id,
+            error_type=error_type,
+            message=message,
+            platform=platform,
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        print(f"Telnyx error logged: user={user_id} type={error_type} msg={message}")
+        return jsonify({'success': True}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/errors/telnyx/summary', methods=['GET'])
+def telnyx_error_summary():
+    """Return error counts grouped by type for the last N days (default 7)."""
+    try:
+        from sqlalchemy import func
+        days = int(request.args.get('days', 7))
+        from datetime import timedelta
+        since = datetime.utcnow() - timedelta(days=days)
+
+        rows = (
+            db.session.query(TelnyxErrorLog.error_type, func.count().label('count'))
+            .filter(TelnyxErrorLog.created_at >= since)
+            .group_by(TelnyxErrorLog.error_type)
+            .order_by(func.count().desc())
+            .all()
+        )
+        return jsonify({
+            'since': since.isoformat(),
+            'summary': [{'errorType': r.error_type, 'count': r.count} for r in rows]
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 with app.app_context():
