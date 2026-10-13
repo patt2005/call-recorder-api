@@ -22,7 +22,14 @@ from services.notification_scheduler import NotificationScheduler
 from services.notification_copy_data import pick_random_coherent
 
 HOST = os.environ.get('HOST')
-CONNECTION_STRING = os.environ.get('DATABASE_URL')
+raw_db_url = os.environ.get('DATABASE_URL', '')
+if raw_db_url.startswith('postgres://'):
+    CONNECTION_STRING = raw_db_url.replace('postgres://', 'postgresql+psycopg2://', 1)
+elif raw_db_url.startswith('postgresql://'):
+    CONNECTION_STRING = raw_db_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+else:
+    CONNECTION_STRING = raw_db_url
+
 TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
 
 app = Flask(__name__)
