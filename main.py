@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request, Response
 from flask_restful import Api
 from flask_cors import CORS
-from flask_migrate import Migrate
+from flask_migrate import Migrate, upgrade
 import base64
 import json
 import os
@@ -37,6 +37,13 @@ CORS(app, origins=[HOST])
 db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
+
+with app.app_context():
+    try:
+        upgrade()
+        print("Database migrations applied successfully.")
+    except Exception as e:
+        print(f"Error applying database migrations: {e}")
 
 notification_scheduler = NotificationScheduler(app)
 
